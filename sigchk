@@ -22541,7 +22541,7 @@ test_exe_main "${@//'$`\'}"
 }
 function mkdel()
 {
-	rm -f -- "/tmp/${0##*'/'}_${rc}.zip"
+	rm -f -- "${mkdel_list[@]}"
 }
 function mkzip() {
 local line random
@@ -22554,7 +22554,6 @@ while read -r line; do
 	if ! [[ -e "/tmp/${0##*'/'}_${rc}.zip" ]]; then
 		if ln -s /dev/null "/tmp/${0##*'/'}_${rc}.zip"; then
 			printf -- '%s\n' "/tmp/${0##*'/'}_${rc}.zip"
-			trap 'mkdel' INT TERM EXIT
 			return 0
 		else
 			exit_code=1
@@ -22570,6 +22569,8 @@ done < /dev/urandom
 }
 function test_zip() {
 	tmp_zip=$( mkzip )
+	mkdel_list+=( "${tmp_zip}" )
+	trap 'mkdel' INT TERM EXIT
 	readarray -t zip_is < <( zip -F "${1}" --out "${tmp_zip}" 2>/dev/null )
 	ok="Zip entry offsets do not need adjusting"
 	case "${zip_is[1]}" in
