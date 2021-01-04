@@ -14532,8 +14532,8 @@ hash_list=(
 )
 file=$( cksum <<< "${1}" )
 file="${file%' '*}"
-case "${!hash_list[$file]}" in
-	0000000)
+case "${hash_list[$file]}" in
+	00000000)
 		return 1
 	;;
 	*)
@@ -14542,10 +14542,228 @@ case "${!hash_list[$file]}" in
 	;;
 esac
 }
+gog_cert_hashes=(
+# setup_multiwinia_2.0.0.11.exe
+[2012031301]="b65e728a1f54d566552107c522d157f7fc249c28a11840edfd72c90ecda0fe85bade3145353fc6c884090ed50c78bad6afa280dca4447a21da626d4467a6c718"
+# setup_99_levels_to_hell_2.0.0.4.exe
+[2012031302]="e7f1e2b9ca4801dce5e74a8ea35988ae0ac87b0061f8d9e4a0dc75d3d4e271f82d11c9d59bd57a5f8f5e81b86540d070af30587881a81f927c42739049b37b26"
+# setup_full_spectrum_warrior_2.1.0.7.exe
+[2013031501]="3257e556fbba5c63a5271f1a590cc7adc9c630ad472c011e0c3d9c4c69483b92c580db2cfd99078e498318aa8ea8ab3631bff14d694e3e6f677336e5d8d70d15"
+# setup_revolt_2.1.0.5.exe
+[2013031502]="6ce223c5a9e35ef507642c58a33eae24de792397410bd3a1907624675de0fa0a85ba8f16d8c0ad3ba5277f3d4775529ad1faac5c63194aec5624aad6405a2bb4"
+# setup_7th_legion_2.0.0.5.exe
+[2013031503]="44e0c97f7d3950e7c5b9d76cb73d3e2656cd92841e63e47aa85a1c7d10d030ee53362f4d6efa71a281335404466437f5df0188ac21019f8ab263fac0a54b7845"
+# setup_balls_of_steel_2.0.0.16.exe
+[2013031504]="1b070201720fb8a31c6368aac5c5c3965d4ade4237e2c230a203787b10b0a24240ea48fac42303ed8bb47d9af249deb73200c1f45099dd88bafce8364ae75493"
+# setup_children_of_the_nile_2.0.0.4.exe
+[2013031505]="507c9493ab78b1f68ca66595391dc43965a41bf0c2a9aeb6d86853741063267a7b1af176483b481614bd35b7b7a72ce3a4b2f350d3a50ea8e85a76bd85c08a35"
+# setup_space_empires_4_deluxe_2.0.0.7.exe
+[2013031506]="910f6151502be506c33208f8d0e22408734b1c42baafad1130a4ec9dcdb6079e95c6d1b9916fdcd506cc3a459a66a79c97424e774c8e7ba0d116057706b62af2"
+# setup_overlord_pack_2.0.1.10.exe
+[2013031507]="d3089d5c9eeede1fdfc213951b8603b8b257f385f4eff51d1bf9feab93e0c3d89e2233451b1ea4a404fbae24c5ab9df2a9e0adc2c82d67d6ab31556ad9fbf799"
+# setup_dark_matter_2.0.0.3.exe
+[2013101508]="c64e44e24326cbf5317b23a532c6ed550e210ddb81312a43f5d867bc80f6781afb3bb768ca8c19e1399ff2f8fe539ebcce1bb21819bead6a59caf91089276379"
+# setup_8th_wonder_2.1.0.9.exe
+[2013013001]="a1264d7ce0bb2f00121439f76669308acc1d977113de6269dd36a48dd5cd4b4a1483a5a3bf094fe22a92a628065f04b1638a5e3ad5c458a80f5a6f57c51cdaaa"
+# setup_sw_empire_at_war_gold_2.0.0.3.exe
+[2014013002]="93ce159579ab090f5415d3dea2746d9764f749aed21fdb994fab3f62a8db6bfb3d3b8975a567d7ab3991b8fb606355947df043852312ad18f913ca6b9c20eb0e"
+# setup_badmojo_2.0.0.3.exe
+[2014013003]="03bdafb52dec0055ae8c519fc3e7e47718623bdd634cb8a702c0de9c1ba922d7615890918f0a34d5920aefb9bcc83c2a6527c9c532b99b41a541692bbce816e9"
+# setup_alan_wake_american_nightmare_2.1.0.24.exe
+[2014013004]="9c0a78e0d793bb4e14a8fb4e8805e1884613cc228ac9f09095dd8319f4943929d8b12b7bbbb377657d360e03b22c198bb7661dd83113ac25e1715192e4d01923"
+# setup_demon_stone_2.0.1.10.exe
+[2014013005]="e05951c124e33af18dd54577d7d5bfc3e009dffba157ebd9ad92707fe098509428a55e3159606a943a64366a7bd53bef46966b718e2e9a4068be339fbac19117"
+# setup_entomorph_2.1.0.8.exe
+[2014013006]="6d8cc6e9d4938bf501d5ddb2abcc9e707548dfaa6ddbe5e271950a0b65f38537296764445aa9107448947dbe1bde7340ddd6cd41b11b20de226af03ad06eb041"
+# setup_achtung_panzer_kharkov1943_2.0.0.3.exe
+[2015040201]="18db337d153400f73840b4aff2ee8329a08265fe505246d9c3841718006f032a03ee2280d8e829818243bbd819ce0934da3ed9a0f19a5d9db6c33dc034768831"
+# setup_88_heroes_64_gog-1_(10716).exe
+[2016051601]="90621c91172696922f83264fb7341b6c7a51725050b2b0ec85965bffcefeb500eeb5ee0e7ce69363b3c3251eebba6eda80fc960f85da7c646a6e31bbacacd498"
+# setup_ai_war_fleet_command_8.024_(14441).exe
+[2017051601]="d9ae29d480a3f087a2143f6c6136619df61af2745d80ff61decef44e6429024de6989e3ba3b7e45252cd489d11b4324ad2371957ae3fe9a8d3de9da3d0e0d7d3"
+# setup_defcon_1.6_(20793).exe
+[2017112101]="065971fa13a639a03a343fcc9ba1b8645b32b9c36f77875e1042a2f0b7ce74471f39bfb2a4136422934f198f10cb5a0d1b78deca9911ebce8a186f161ff3f1e6"
+# setup_15_days_1.0_(19285).exe
+[2017112102]="365c94c4d066fce2247efa759e42363bf8d908f2ab1c8a6140efddff83931de8aa6bd18d5cfdaf97fec51ba817def23ec66217a20e0f67476884a0e51139d055"
+# setup_140_10.10.2019_(33252).exe
+[2018101501]="4de6ec4b94f18e346333d49c0833818218d8f1fee68eaebc32eb40f0dfa5f4d2bc599fea35c8ae4a5e7e95410a1a22edefaddf676dc3a88cb6e83d2deed4e9a7"
+# setup_forager_4.0.3_(35567).exe
+[2019121301]="5e9fec5f728f654b1d15d3c4eb30f274dbffdce18fa281658a3ef26ab754144d81631336ee60fe5d8b2c5ddf7a5fb3f20e56a86575d61db384a81c8f0fde895f"
+# setup_1942_the_pacific_air_war_1.5b_(38429).exe
+[2019121302]="ae397d85f7cd2bbf6181a918931555d1d6bbb319b62d1be6017a577f8da50b39d8e1fceca590ca375c7978fc1c368f322594f2eebce356fb0a2daa6e8fc17c7b"
+)
+function test_exe_issuer_full() {
+local "exe_hash_cert" "line" "cert_hash"
+exe_hash_cert=$(
+	while read -r line; do
+		line="${line/*$'\t'}"
+		case "${line}" in
+		"Issuer :"*)
+			printf -- '%s\n' "${line/#"Issuer : "}"
+		;;
+		"Serial :"*)
+			printf -- '%s\n' "${line/#"Serial : "}"
+		;;
+		"Subject:"*)
+			line="${line/*$'\t'}"
+			printf -- '%s\n' "${line/#"Subject: "}"
+		;;
+		"Signature verification: ok")
+			printf -- '%s\n' "${line}"
+		;;
+		"Succeeded")
+			printf -- '%s\n' "${line}"
+		;;
+		esac
+	done
+)
+case "${exe_hash_cert}" in
+	"Signature verification: ok"*)
+		:
+	;;
+	*)
+		return 2
+	;;
+esac
+case "${exe_hash_cert}" in
+	*"Succeeded")
+		:
+	;;
+	*)
+		return 2
+	;;
+esac
+exe_hash_cert="${exe_hash_cert/#Signature verification: ok$'\n'}"
+exe_hash_cert="${exe_hash_cert/%$'\n'Succeeded}"
+exe_hash_cert=$( sort -u <<< "${exe_hash_cert}" | sha512sum < /dev/stdin )
+exe_hash_cert="${exe_hash_cert//"  -"}"
+exe_hash_cert="${exe_hash_cert//$'\n'}"
+for cert_hash in "${gog_cert_hashes[@]}"; do
+	case "${cert_hash}" in
+		"${exe_hash_cert}")
+			return 0
+		;;
+	esac
+done
+echo "${exe_hash_cert}"
+return 1
+}
+gog_digicert_list=(
+489b29f48a5eeabb13a039ba6e9c7b872c6d093ac75a7a18d4afd92d63fe1f765d10365f2c4a99a6a58e29a81f149540e649be2d22dd60688fe87e5cbfb36308
+6cb21c695528c310694ccdac73b09b0ece262ba67e5648101217102e8f3474e083068f8f1bfe532d77d536e9c39e42fef69967e7b5ef4400619c56d983a431dc
+a57fe19a359051baa9744a4629728ff93b4798d80e48be804f30e28aa8f2ffafb9691b8f92be762b40030d551113149ecd5167016dec3af2c0a43a8fba3f4114
+dac2339e7bfa91cfd8bce718c202df553436a879dd573785c6fa47ba5c94be00493c0225252b8d38431771f132db27e66d6e78d231b80fb802ac082ef0b9cc4e
+)
+gog_subject_list=(
+"/C=CY/L=Larnaca/O=GOG Limited/CN=GOG Limited"
+"/C=CY/L=Nicosia/O=GOG Limited/CN=GOG Limited"
+"/C=PL/L=Warsaw/O=GOG Sp. z o.o./CN=GOG Sp. z o.o."
+)
+function test_exe_issuer_mini_grep_dot() {
+local "line"
+while read -r line; do
+	case "${line}" in
+		"Issuer : "*)
+			line="${line#"Issuer : "}"
+			printf -- '%s\n' "${line}" 2>/dev/stderr
+		;;
+	esac
+done < /dev/stdin
+}
+function test_exe_issuer_mini_compare_signature() {
+while read -r line; do
+	case "${line/*$'\t'}" in
+		"Signer #0:":)
+			line_on=3
+		;;
+		"Cert #"[0-9]:)
+			line_on=2
+		;;
+		"Succeeded")
+			return 0
+		;;
+		"------------------")
+			continue
+		;;
+	esac
+	case "${line_on:-"0"}" in
+		1)
+			for gog_subject in "${gog_subject_list[@]}"; do
+				case "${line/*$'\t'"Subject: "}" in
+					*"${gog_subject}")
+						unset "line_on"
+						break		
+					;;
+				esac
+			done
+			case "${line_on:-"0"}" in
+				0)
+					continue
+				;;
+				1)
+					return 2
+				;;
+			esac
+		;;
+		2)
+			for gog_subject in "${gog_subject_list[@]}"; do
+				case "${line/*$'\t'"Subject: "}" in
+					*"${gog_subject}")
+						skip_line=3
+						break
+					;;
+				esac
+			done
+			case "${skip_line:-"0"}" in
+				1|2|3)
+					((skip_line--))
+				;;
+				0)
+					printf -- '%s\n' "${line/%"Cert #"[0-9]:}"
+				;;
+				*)
+					unset "skip_line"
+				;;
+			esac
+		;;
+		3)
+			line_on=1
+		;;
+	esac
+done | test_exe_issuer_mini_grep_dot < /dev/stdin
+}
+function test_exe_issuer_mini() {
+local "list" "line_on" "gog_subject" "skip_line" "gog_digicert"
+gog_hash=$( test_exe_issuer_mini_compare_signature | sha512sum )
+gog_hash="${gog_hash/%"  -"}"
+for gog_digicert in "${gog_digicert_list[@]}"; do
+		case "${gog_hash}" in
+			"${gog_digicert}")
+				return 0
+			;;
+		esac
+done
+return 2
+}
+function test_exe_issuer() {
+case "${1}" in
+	full|mini)
+		if test_exe_issuer_"${1}"; then
+			return 0
+		else
+			return 1
+		fi
+	;;
+	*)
+		printf -- '%s\n' "${FUNCNAME[0]}: unrecognized option '${1}'" 1>&2
+		exit 1
+	;;
+esac
+}
 function verify_exe() {
 local hash
 if osslsigncode extract-signature -in "${1}" -out /dev/null &>/dev/null; then
-	if osslsigncode verify -in "${1}" &>/dev/null; then
+	if osslsigncode verify -in "${1}" | test_exe_issuer full &>/dev/null; then
 		return 0
 	else
 		return 1
