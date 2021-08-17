@@ -1,0 +1,2150 @@
+#!/bin/sh
+{
+set -u
+
+necho() {
+printf -- '%s' "${@}"
+}
+
+echo() {
+printf -- '%s\n' "${@}"
+}
+
+echoerr() {
+printf -- '%s\n' "${@}" 1>&2
+code=1
+}
+
+pkgchk() {
+local "count" "line" "type"
+case "${#}" in
+	0)
+		return 0
+	;;
+esac
+count=0
+for line in "${@}"; do
+	type=$( type "${line##*"/"}" 2>/dev/null )
+	case "${type##*"/"}" in
+		"${line##*"/"}"|"${line##*"/"} is ${line##*"/"}")
+			count=$(( count + 1 ))
+		;;
+	esac
+done
+case "${count:-"0"}" in
+	"${#}")
+		return 0
+	;;
+	*)
+		printf -- '%s\n' "${name}: please install: ${*}"
+		exit 1	
+	;;
+esac
+}
+
+is_file_check() {
+if [ -d "${1}" ]; then
+	printf -- '%s\n' "${name}: ${data}: Is a directory" 1>&2
+	return 1
+elif [ -e "${1}" ]; then
+	if [ -r "${1}" ]; then
+		return 0
+	else
+		printf -- '%s\n' "${name}: ${data}: Permission denied" 1>&2
+		return 1
+	fi
+else
+	printf -- '%s\n' "${name}: ${data}: No such file or directory" 1>&2
+	return 1
+fi
+}
+
+is_file() {
+local "file"
+case "${#}" in
+	0)
+		return 1
+	;;
+	1)
+		is_file_check "${1}"
+	;;
+	*)
+		for file in "${@}"; do
+			is_file_check "${file}"
+		done
+	;;
+esac
+}
+
+show_help() {
+local "text"
+text="Usage: ${name} [OPTION]... [FILE]...
+Check integrity of GOG games and goodies.
+
+Filetypes: 7Z, APK, AVI, BIN, BR, BZ2, DEB, EXE, GZ, JPG, MKV, MP4, PDF, PNG, RAR, XZ, ZIP, ZST.
+
+      --dry-run
+        find non-verifiable installers only
+      --fingerprint
+        show unknown installer fingerprints
+  -t, --timestamp
+        try to recover modification date
+  -s, --strict-gog
+        verify GOG installer authenticity
+      --ignore-missing
+        ignore missing installer BINs
+      --no-gog
+        do not expect GOG installers
+      --no-exceptions
+        do not use built-in checksums
+      --no-local
+        do not use local checksums"
+if type attr >/dev/null 2>&1; then
+	text="${text}
+  -x, --xattrs
+        use BLAKE2b extended attributes
+  -dx, --delete-xattrs
+        delete BLAKE2b extended attributes"
+fi
+if type mkpar quadsum >/dev/null 2>&1; then
+	text="${text}
+  -p, --strict-parchive
+        make recovery check data"
+fi
+text="${text}
+  -h, --help
+        display this help and exit
+      --version
+        output version information and exit
+  -q, --quiet
+        quiet mode"
+printf -- '%s\n' "${text}"
+exit "${1:-"0"}"
+}
+
+setopt() {
+local "OPT" "OPTARG" "OPTERR" "OPTIND"
+OPTIND=1
+OPTERR=0
+while getopts "tTpPdDsSxXhHqQ-:" OPT; do
+	case "${OPT}" in
+		t|T)
+			timestamp=1
+		;;
+		p|P)
+			recovery=1
+		;;
+		s|S)
+			strict=1
+		;;
+		d|D)
+			no_xattrs=1
+		;;
+		x|X)
+			is_xattrs=1
+		;;
+		h|H)
+			show_help
+		;;
+		q|Q)
+			exec 2>/dev/null
+		;;
+		-)
+			case "${OPTARG}" in
+				im|ignore|ignore-missing)
+					ignore_missing=1
+				;;
+				fp|fingerprint|show-fingerprint)
+					fingerprint=1
+					strict=1
+				;;
+				t|T|ts|time|timestamp|stamp)
+					timestamp=1
+				;;
+				p|P|parchive|strict-parchive)
+					recovery=1
+					strict=1
+				;;
+				s|S|strict|strict-gog)
+					strict=1
+				;;
+				nl|NL|no-local)
+					no_local=1
+				;;
+				d|D|delete-xattrs)
+					no_xattrs=1
+				;;
+				x|X|xattrs)
+					is_xattrs=1
+				;;
+				ne|NE|no-exceptions)
+					no_excl=1
+				;;
+				dr|DR|dry-run)
+					exec 2>/dev/stdout
+					dry_run=1
+				;;
+				ng|NG|no-gog)
+					is_gog=0
+					strict=0
+				;;
+				x|X|xattrs)
+					is_xattrs=1
+				;;
+				h|H|help)
+					show_help
+				;;
+				version)
+					printf -- '%s\n' "${name} ${version:-"1.1.4"}"
+					exit 0
+				;;
+				q|Q|quiet)
+					exec 2>/dev/null
+				;;
+				*)
+					show_help 1 1>&2
+				;;
+			esac
+		;;
+		*)
+			show_help 1 1>&2
+		;;
+	esac
+done
+shift $(( OPTIND - 1 ))
+OPTIND=1
+OPTERR=1
+
+case "${#}" in
+	0)
+		exit 0
+	;;
+	*)
+		for data in "${@}"; do
+			if is_file "${data}"; then
+				process "${data}"
+			else
+				case "${dry_run:-"0"}" in
+					0)
+						code=1
+					;;
+				esac
+			fi
+		done
+	;;
+esac
+}
+
+fixstamp() {
+
+	exe_stamp_cut() {
+	local "num" "line"
+	num=0
+	while read -r "line"; do
+		echo "${line}"
+		num=$(( num + 1 ))
+		case "${num}" in
+			9)
+				break
+			;;
+		esac
+	done
+	}
+	
+	exe_stamp() {
+	local "stamp" "funccode"
+	case "${time_exceptions}" in
+		*"${1##*"/"}"*)
+			stamp=$( echo "${time_exceptions}" | grep -m 1 -- "  ${1##*"/"}$" )
+			stamp="${stamp%%" "*}"
+		;;
+		*)
+			stamp=$( tac "${1}" | cat -e | exe_stamp_cut | sed -nE 's/.*([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})Z0.*/20\1-\2-\3T\4:\5:\6+00:00$/p' )
+			stamp="${stamp%%'$'*}"
+			case "${stamp:-""}" in
+				"")
+					stamp=""
+				;;
+				*)
+					stamp=$( date -d "${stamp}" -- '+%Y%m%d%H%M.%S' )
+				;;
+			esac
+		;;
+	esac
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+		funccode=1
+	fi
+	if [ -s "${1%".exe"}-1.bin" ]; then
+		for bin in "${1%".exe"}-"*".bin"; do
+			if ! touch -t "${stamp}" -- "${bin}" 2>/dev/null; then
+				funccode=1
+			fi
+		done
+	elif [ -s "${1%".exe"}.bin" ]; then
+		if ! touch -t "${stamp}" -- "${1%".exe"}.bin" 2>/dev/null; then
+			funccode=1
+		fi
+	fi
+	return "${funccode:-"0"}"
+	}
+	
+	
+	pdf_stamp() {
+	local "stamp"
+	stamp=$( tac "${1}" | cat -e | grep -Em 1 -- '<xmp:ModifyDate>|<xmp:MetadataDate>|<xmp:CreationDate>' )
+	stamp="${stamp%%'</xmp:ModifyDate>'*}"
+	stamp="${stamp##*'<xmp:ModifyDate>'}"
+	stamp="${stamp%%'</xmp:MetadataDate>'*}"
+	stamp="${stamp##*'<xmp:MetadataDate>'}"
+	stamp="${stamp%%'</xmp:CreationDate>'*}"
+	stamp="${stamp##*'<xmp:CreationDate>'}"
+	case "${stamp:-""}" in
+		"")
+			stamp=""
+		;;
+		*)
+			stamp=$( date -d "${stamp}" -- '+%Y%m%d%H%M.%S' )
+		;;
+	esac
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+		return 1
+	fi
+	}
+	
+	seven_zip_date() {
+	local "num" "line"
+	num=0
+	while read -r "line"; do
+		case "${num}" in
+			2)
+				echo "${line}" | sed 's/ //; s/ .*//; s/-//g; s/://; s/:/./'
+				break
+			;;
+		esac
+		case "${line}" in
+			"-------------------"*)
+				num=$(( num + 1 ))
+			;;
+		esac
+	done
+	}
+	
+	seven_zip_stamp() {
+	local "stamp"
+	if ! type 7z >/dev/null 2>&1; then
+		return 0
+	fi	
+	stamp=$( 7z l -- "${1}" | seven_zip_date )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+		return 1
+	fi
+	}
+	
+	tar_stamp_head() {
+	local "line"
+	while read -r "line"; do
+		echo "${line}"
+		break
+	done
+	}
+	
+	tar_stamp() {
+	local "stamp"
+	stamp=$( tar --list --verbose --full-time -f "${1}" )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	stamp=$( echo "${stamp}" | sed -nE 's/.*[0-9] ([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}) .*/\1\2\3\4\5.\6/p' )
+	stamp=$( echo "${stamp}" | sort -rn | tar_stamp_head )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+		return 1
+	fi
+	}
+	
+	deb_stamp() {
+	local "stamp"
+	stamp=$( 7z l -- "${1}" | grep -m 1 -- "^Modified = " )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	stamp=$( echo "${stamp}" | sed -nE 's/Modified = ([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})/\1\2\3\4\5.\6/p' )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+		return 1
+	fi
+	}
+	
+	br_stamp() {
+	local "stamp"
+	if ! type "brotli" >/dev/null 2>&1; then
+		return 0
+	fi
+	stamp=$( tar --use-compress-program="brotli" --list --verbose --full-time -f "${1}" )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	stamp=$( echo "${stamp}" | sed -nE 's/.*[0-9] ([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}) .*/\1\2\3\4\5.\6/p' )
+	stamp=$( echo "${stamp}" | sort -rn | tar_stamp_head )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+		return 1
+	fi
+	}
+	
+	zst_stamp() {
+	local "stamp"
+	if ! type "zstd" >/dev/null 2>&1; then
+		return 0
+	fi
+	stamp=$( tar --list --verbose --full-time -f "${1}" )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	stamp=$( echo "${stamp}" | sed -nE 's/.*[0-9] ([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}) .*/\1\2\3\4\5.\6/p' )
+	stamp=$( echo "${stamp}" | sort -rn | tar_stamp_head )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+		return 1
+	fi
+	}
+
+	image_stamp() {
+	local "stamp"
+	if ! type "identify" >/dev/null 2>&1; then
+		return 0
+	fi
+	stamp=$( identify -verbose -- "${1}" | grep -m 1 -- '^    exif:DateTime: ' )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	stamp=$( echo "${stamp}" | sed -nE 's/    exif:DateTime: ([0-9]{4}):([0-9]{2}):([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})/\1\2\3\4\5.\6/p' )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+		return 1
+	fi
+	}
+
+	video_stamp() {
+	local "stamp"
+	if ! type "ffmpeg" >/dev/null 2>&1; then
+		return 0
+	fi
+	stamp=$( ffmpeg -i "${1}" -f null - 2>/dev/stdout | grep -m 1 -- '^    creation_time   : ' )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	stamp=$( echo "${stamp}" | sed 's/    creation_time   : //' )
+	stamp=$( date -d "${stamp}" -- '+%Y%m%d%H%M.%S' )
+	case "${stamp:-""}" in
+		"")
+			return 1
+		;;
+	esac
+	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+		return 1
+	fi
+	}
+	
+	multi_stamp() {
+	case "${1##*"/"}" in
+		*.[eE][xX][eE])
+			if ! exe_stamp "${1}"; then
+				return 1
+			fi
+		;;
+		*.[pP][dD][fF])
+			if ! pdf_stamp "${1}"; then
+				return 1
+			fi
+		;;
+		*.[tT][aA][rR]|*.[tT][gG][zZ]|*.[tT][aA][rR].[gG][zZ]|*.[tT][bB][zZ]|*.[tT][aA][rR].[bB][zZ]|*.[tT][bB][zZ]2|*.[tT][aA][rR].[bB][zZ]2|*.[tT][xX][zZ]|*.[tT][aA][rR].[xX][zZ])
+			if ! tar_stamp "${1}"; then
+				return 1
+			fi
+		;;
+		*.[aA][pP][kK]|*.7[zZ]|*.[iI][sS][oO]|*.[jJ][aA][rR]|*.[rR][aA][rR]|*.[zZ][iI][pP])
+			if ! seven_zip_stamp "${1}"; then
+				return 1
+			fi
+		;;
+		*.[dD][eE][bB])
+			if ! deb_stamp "${1}"; then
+				return 1
+			fi
+		;;
+		*.[tT][aA][rR].[bB][rR]|*.[tT][bB][rR])
+			if ! br_stamp "${1}"; then
+				return 1
+			fi
+		;;
+		*.[tT][aA][rR].[zZ][sS][tT]|*.[tT][aA][rR].[zZ][sS][tT][dD]|*.[tT][zZ][sS][tT]|*.[tT][zZ][sS][tT][dD])
+			if ! zst_stamp "${1}"; then
+				return 1
+			fi
+		;;
+		*.[pP][nN][gG]|*.[jJ][pP][gG])
+			if ! image_stamp "${1}"; then
+				return 1
+			fi
+		;;
+		*.[aA][vV][iI]|*.[mM][kK][vV]|*.[mM][pP]4)
+			if ! video_stamp "${1}"; then
+				return 1
+			fi
+		;;
+		*)
+			return 0
+		;;
+	esac
+	}
+	
+	local "code" "item"
+	if ! type date touch >/dev/null 2>&1; then
+		return 0
+	fi	
+	case "${dry_run:-"0"}" in
+		1)
+			return 0
+		;;
+	esac
+	case "${timestamp:-"0"}" in
+		0)
+			return 0
+		;;
+	esac
+	for item in "${@}"; do
+		if ! [ -s "${item}" ]; then
+			continue
+		fi
+		if ! multi_stamp "${item}"; then
+			code=1
+		fi
+	done	
+	return "${code:-"0"}"
+
+}
+
+process_local_checksums_check() {
+local "hash"
+hash=$(
+	if ! grep -m 1 -- "^SHA512 (${dat}) = " "${sum}" 2>/dev/null; then
+		grep -m 1 -E -- "  .*${dat}$| *.*${dat}$" "${sum}" 2>/dev/null
+	fi
+)
+case "${hash:-""}" in
+	"")
+		return 0
+	;;
+	*[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]"  ${dat}")
+		hash="${hash%%"  "*}  ${dir}/${dat}"
+	;;
+	*[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]" *${dat}")
+		hash="${hash%%" *"*}  ${dir}/${dat}"
+	;;
+	"SHA512 (${dat}) = "[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+		hash="${hash##*"SHA512 (${dat}) = "}  ${dir}/${dat}"
+	;;
+	"SHA256 (${dat}) = "[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+		sum="${sum%"/"*}/SHA256SUM"
+		hash="${hash##*"SHA256 (${dat}) = "}  ${dir}/${dat}"
+	;;
+	"SHA1 (${dat}) = "[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+		sum="${sum%"/"*}/SHA1SUM"
+		hash="${hash##*"SHA1 (${dat}) = "}  ${dir}/${dat}"
+	;;
+	"MD5 (${dat}) = "[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+		sum="${sum%"/"*}/MD5SUM"
+		hash="${hash##*"MD5 (${dat}) = "}  ${dir}/${dat}"
+	;;
+	*)
+		return 0
+	;;
+esac
+case "${sum}" in
+	*/MD5SUM)
+		if ! echo "${hash}" | md5sum -c; then
+			return 1
+		fi
+	;;
+	*/SHA1SUM)
+		if ! echo "${hash}" | sha1sum -c; then
+			return 1
+		fi
+	;;
+	*/SHA256SUM)
+		if ! echo "${hash}" | sha256sum -c; then
+			return 1
+		fi
+	;;				
+	*/SHA512SUM|*/TRIOSUM)
+		if ! echo "${hash}" | sha512sum -c; then
+			return 1
+		fi
+	;;
+	*/QUADSUM)
+		case "${recovery:-"0"}" in
+			0)
+				if type quadsum; then
+					if ! quadsum -cs -- "${sum}"; then
+						return 1
+					fi
+				fi
+				if ! echo "${hash}" | sha512sum -c; then
+					return 1
+				fi
+			;;
+		esac
+	;;
+esac >/dev/null 2>&1
+}
+
+process_local_checksums() {
+local "dat" "dir" "sum"
+case "${no_local:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if type attr >/dev/null 2>&1; then
+	case "${is_xattrs:-"0"}" in
+		1)		
+			if getfattr -- "${1}" >/dev/null 2>&1; then
+				return 0
+			fi
+		;;
+	esac
+fi
+dat="${1##*"/"}"
+case "${1}" in
+	*/*)
+		dir="${1%"/"*}"
+	;;
+	*)
+		dir="${PWD}"
+	;;
+esac
+if [ -d "${dir}" ]; then
+	for sum in QUADSUM TRIOSUM SHA512SUM SHA256SUM SHA1SUM MD5SUM; do
+		sum="${dir}/${sum}"
+		if [ -s "${sum}" ]; then
+			if process_local_checksums_check; then
+				break
+			else
+				echo "${1}: FAILED"
+				code=1
+				return 1
+			fi
+		else
+			continue
+		fi
+	done
+else
+	return 1
+fi
+}
+
+process_exe_warn_miss() {
+local "base" "exe" "base" "old" "now" "total"
+case "${is_gog:-"1"}" in
+	0)
+		return 0
+	;;
+esac
+case "${ignore_missing:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+base="${1##*"/"}"
+base="${base%"."*}"
+exe="${1}"
+exe="$( dirname -- "${exe}" )"
+now=$( find "${exe}" -iname "${base}*.bin" 2>/dev/null | wc -l 2>/dev/null )
+old=$( tac -- "${1}" 2>/dev/null | cat -e 2>/dev/null | grep -m 1 -- "[0-9][0-9]#GOGCRCSTRING" 2>/dev/null )
+case "${old:-""}" in
+	"")
+		return 0
+	;;
+esac
+unset "exe"
+old="${old%"#GOGCRCSTRING"*}"
+num="${#old}"
+num=$(( num - 2 ))
+old=$( necho "${old}" | sed -r "s/.{${num}}(..$)/\1/; s/^0//" )
+unset "num"
+total=$(( old - now ))
+unset "old" "now"
+case "${total:-"0"}" in
+	"-"*|0)
+		return 0
+	;;
+	1)
+		echoerr "${name}: ${1}: Is missing 1 BIN" 1>&2
+		return 1
+	;;
+	*)
+		echoerr "${name}: ${1}: Is missing ${total} BINs" 1>&2
+		return 1
+	;;
+esac
+}
+
+process_exe_exceptions() {
+local "exception"
+unset "sha_one"
+case "${no_excl:-"0"}" in
+	1)
+		return 1
+	;;
+esac
+exception=$( echo "${exe_exceptions}" | grep -m 1 -- "  ${1##*"/"}$" )
+case "${exception:-""}" in
+	"")
+		return 1
+	;;
+	*)
+		sha_one="${exception}"
+		return 0
+	;;
+esac
+}
+
+process_exe_state() {
+local "line" "start"
+strict_full=""
+while read -r "line"; do
+	case "${strict:-"0"}" in
+		1)
+			case "${line}" in
+				"Subject"*)
+					strict_full="${strict_full}${line##*": "}"
+				;;
+				"Issuer"*)
+					strict_full="${strict_full}${line##*": "}"
+				;;
+				"Serial"*)
+					strict_full="${strict_full}${line##*": "}"
+					continue
+				;;
+			esac
+		;;
+	esac
+	case "${line}" in
+		"Current message digest"*)
+			old="${line##*": "}"
+		;;
+		"Calculated message digest"*)
+			new="${line##*": "}"
+		;;
+		"Signature verification:"*)
+			as="${line##*": "}"
+		;;
+		"No signature found.")
+			echoerr "${name}: ${1}: No signature found"
+			return 1
+		;;
+	esac
+	case "${is_gog:-"1"}" in
+		0)
+			to="ok"
+			from="ok"
+		;;
+		1)
+			case "${to:-"0"}${from:-"0"}" in
+				00|01|10)
+					case "${line}" in
+						"Subject: "*"/O=GOG Sp. z o.o./"*|"Subject: "*"/O=GOG Limited/"*)
+							to="ok"
+						;;
+						"Issuer : "*"/O=DigiCert Inc/"*)
+							from="ok"
+						;;
+					esac
+				;;
+			esac
+		;;
+	esac
+done
+case "${is_gog:-"1"}" in
+	1)
+		case "${strict:-"0"}" in
+			1)
+				strict_full=$( echo "${strict_full}" | sha512sum )
+				strict_full="${strict_full:-"UNKNOWN"}"
+				strict_full="${strict_full%%"  "*}"
+				if ! echo "${cert_fingerprints}" | grep -m 1 -- "^${strict_full}$" >/dev/null 2>&1; then
+					case "${old:-"none"}_${as:-"none"}_${to:-"none"}_${to:-"none"}" in
+						"${new:-"none"}"_ok_ok_ok)
+							echo "${strict_full}"
+							return 2
+						;;
+						*)
+							return 1
+						;;
+					esac
+					return 1
+				fi
+			;;
+		esac
+	;;
+esac
+case "${old:-"none"}_${as:-"none"}_${to:-"none"}_${to:-"none"}" in
+	"${new:-"none"}"_ok_ok_ok)
+		return 0
+	;;
+	*)
+		return 1
+	;;
+esac
+}
+
+process_exe() {
+local "sha_one"
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if osslsigncode extract-signature -in "${1}" -out /dev/null >/dev/null 2>&1; then
+	case "${dry_run:-"0"}" in
+		1)
+			return 0
+		;;
+	esac
+	strict_full=$( osslsigncode verify -in "${1}" 2>/dev/null | process_exe_state )
+	case "${?}" in
+		0)
+			process_recovery_make "${1}"
+			process_xattr_make "${1}"
+			fixstamp "${1}"
+			if process_exe_warn_miss "${1}"; then
+				echo "${1}: OK"
+			else
+				echo "${1}: FAILED"
+				code=1
+			fi
+		;;
+		1)		
+			echo "${1}: FAILED"
+			code=1
+		;;
+		2)
+			case "${fingerprint:-"0"}" in
+				1)
+					echo "${name}: ${1}'s fingerprint: ${strict_full:-""}" 1>&2
+				;;
+			esac
+			echo "${1}: FAILED"
+			code=1
+		;;
+	esac
+else
+	if process_exe_exceptions "${1}"; then
+		case "${dry_run:-"0"}" in
+			1)
+				return 0
+			;;
+		esac
+		if echo "${sha_one%%"  "*}  ${1}" | sha1sum -c; then
+			process_recovery_make "${1}"
+			process_xattr_make "${1}"
+			fixstamp "${1}"
+		else
+			code=1
+		fi
+	else
+		echoerr "${name}: ${1}: No signature found"
+		case "${dry_run:-"0"}" in
+			0)
+				echo "${1}: FAILED"
+			;;
+		esac
+		return 1
+	fi
+fi
+}
+
+process_bin_exceptions() {
+local  "exception"
+unset "md_five"
+case "${no_excl:-"0"}" in
+	1)
+		return 1
+	;;
+esac
+exception=$( echo "${bin_exceptions}" | grep -m 1 -- "  ${1##*"/"}$" )
+case "${exception:-""}" in
+	"")
+		return 1
+	;;
+	*)
+		md_five="${exception}"
+		return 0
+	;;
+esac
+}
+
+process_bin_extract() {
+local "n_orig"
+case "${n}" in
+	01|02|03|04|05|06|07|08|09|00)
+		n=$( necho "${n}" | sed -r "s/^0//" )
+	;;
+esac
+n_orig="${n}"
+b=$(( n * 32 ))
+n=$(( t - b ))
+t=$( necho "${1}" | sed -r "s/.*(.{${b}})..$/\1/" )
+n=0
+while true; do
+	n=$(( n + 1 ))
+	case "${#t}" in
+		0|1|2)
+			break
+		;;
+	esac
+	if [ "${n}" -gt "${n_orig}" ]; then
+		break
+	fi
+	case "${solo:-"0"}" in
+		0)
+			echo "$( necho "${t}" | sed -r "s/^(.{32}).*/\1/" )  ${exe%".exe"}-${n}.bin"
+		;;
+		1)
+			echo "$( necho "${t}" | sed -r "s/^(.{32}).*/\1/" )  ${exe%".exe"}.bin"
+			break
+		;;
+	esac
+	t=$( necho "${t}" | sed -r "s/.{32}(.*)/\1/" )
+done
+}
+
+process_bin() {
+local "exe" "solo" "old_exe" "md5" "num_bin" "t" "n" "mn" "md_five" "find_bins"
+case "${is_gog:-"1"}" in
+	0)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+case "${1}" in
+	*"-"[0-9][0-9].[bB][iI][nN]|*"-"[0-9].[bB][iI][nN])
+		exe="${1%"-"*}.exe"
+	;;
+	*)
+		exe="${1%"."*}.exe"
+		solo=1
+	;;
+esac
+if ! [ -s "${exe}" ]; then
+	echoerr "${name}: ${1}: No EXE found"
+	echo "${1}: FAILED"
+	code=1
+	return 1
+fi
+find_bins="${exe%".exe"}"
+find_bins="${find_bins##*"/"}"
+if process_bin_exceptions "${1}"; then	
+	case "${dry_run:-"0"}" in
+		1)
+			return 0
+		;;
+	esac
+	if echo "${md_five%%"  "*}  ${1}" | md5sum -c; then
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+		return 0
+	else
+		code=1
+		return 1
+	fi
+	case "${ignore_missing:-"0"}" in
+		1)
+			return 0
+		;;
+	esac
+	num_bin=$( find "$( dirname -- "${exe}" )" -iname "${find_bins}*.bin" 2>/dev/null | wc -l 2>/dev/null )
+	n=$( echo "${bin_exceptions}" | grep -c -- "  ${exe%".exe"}" )
+	mn=$(( n - num_bin ))
+	case "${mn}" in
+		"-"*|0)
+			return 0
+		;;
+		1)
+			echoerr "${name}: ${1}: Is missing 1 BIN" 1>&2
+			return 1
+		;;
+		*)
+			echoerr "${name}: ${1}: Is missing ${mn} BINs" 1>&2
+			return 1
+		;;
+	esac
+fi
+case "${old_exe:-""}" in
+	"${exe}")
+		:
+	;;
+	*)
+		md_five=$( tac -- "${exe}" 2>/dev/null | cat -e 2>/dev/null | grep -m 1 -- "[0-9][0-9]#GOGCRCSTRING" 2>/dev/null )
+		md_five="${md_five%"#GOGCRCSTRING"*}"
+		md_five=$( echo "${md_five}" | awk '{print tolower($0)}' )
+		t="${#md_five}"
+		t=$(( t - 2 ))
+		num_bin=$( find "$( dirname -- "${exe}" )" -iname "${find_bins}*.bin" 2>/dev/null | wc -l 2>/dev/null )
+		case "${num_bin:-""}" in
+			"")
+				num_bin="00"
+			;;
+			1|2|3|4|5|6|7|8|9)
+				num_bin="0${num_bin}"
+			;;
+		esac
+		case "${md_five}" in
+			"")
+				echoerr "${name}: ${1}: No checksum found"
+				case "${dry_run:-"0"}" in
+					0)
+						echo "${1}: FAILED"
+						return 1
+					;;
+				esac
+				unset "md5" "old_exe"
+			;;
+			00)
+				return 0
+			;;
+			*)
+				n=$( necho "${md_five}" | sed -r "s/.{${t}}(..$)/\1/" )
+				md_five=$( process_bin_extract "${md_five}" )
+			;;
+		esac
+		case "${n}" in
+			"${num_bin}"|0|00)
+				:
+			;;
+			*)
+				case "${ignore_missing:-"0"}" in
+					0)
+						case "${n}" in
+							01|02|03|04|05|06|07|08|09|00)
+							n=$( necho "${n}" | sed -r "s/^0//" )
+							;;
+						esac
+						case "${num_bin}" in
+							01|02|03|04|05|06|07|08|09|00)
+								num_bin=$( necho "${num_bin}" | sed -r "s/^0//" )
+							;;
+						esac
+						mn=$(( n - num_bin ))
+						case "${mn}" in
+							"-"*|0)
+								:
+							;;
+							1)
+								echoerr "${name}: ${1}: Is missing 1 BIN" 1>&2
+								return 1
+							;;
+							*)
+								echoerr "${name}: ${1}: Is missing ${mn} BINs" 1>&2
+								return 1
+							;;
+						esac
+					;;
+				esac
+			;;
+		esac
+		old_exe="${exe}"
+	;;
+esac
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+case "${md_five:-""}" in
+	"")
+		echo "${1}: FAILED"
+		code=1
+	;;
+	*)
+		to_check=$( echo "${md_five}" | grep -m 1 -- "${1##*"/"}" )
+		if echo "${to_check%%"  "*}  ${1}" | md5sum -c; then
+			process_recovery_make "${1}"
+			process_xattr_make "${1}"
+			fixstamp "${1}"
+		else
+			code=1
+		fi
+	;;
+esac
+}
+
+process_recovery_make_failed() {
+echo "${1:-"parchive: ${item}: FAILED"}" 1>&2
+if rm -f -- "${dir}/par/"*."par2" "${dir}/QUADSUM"; then
+	rmdir -- "${dir}/par/"
+fi
+code=1
+}
+
+process_recovery_make() {
+local "dir" "item" "full" "par" "hash" "hash_par_old" "hash_par_new" "hash_par_tmp_one" "hash_par_tmp_two"
+case "${recovery:-"0"}" in
+	0)
+		return 0
+	;;
+esac
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! [ -s "${1}" ]; then
+	return 0
+fi
+if type mkpar quadsum >/dev/null 2>&1; then
+	full=$( realpath --no-symlinks -- "${1}" )
+	dir="${full%"/"*}"
+	item="${full##*"/"}"
+	par="${dir}/par/${item}"
+	if ! [ -d "${dir}" ]; then
+		return 1
+	fi
+	if [ -s "${par}.par2" ]; then
+		if ! mkpar -s -- "${par}.par2" 2>/dev/null; then
+			echo "mkpar: ${item}: Par2 verification FAILED" 1>&2
+			code=1
+			return 1
+		fi
+		if quadsum -cs -- "${dir}/QUADSUM.sig" 2>/dev/null; then
+			return 0
+		else
+			echo "quadsum: ${item}: Secure verification FAILED" 1>&2
+			code=1
+			return 1
+		fi
+	fi
+	if grep -m 1 -- " (${item}) = " "${dir}/QUADSUM" 2>/dev/null; then
+		return 0
+	fi
+	if quadsum --no-dir -- "${full}" >> "${dir}/QUADSUM" 2>/dev/null; then
+		if mkpar -xs -- "${full}" 2>/dev/null; then
+			hash_par_old="$( getfattr -n "user.par2.blake2b" --only-values -- "${par}.par2" 2>/dev/null )"
+			hash_par_old="${hash_par_old}$( getfattr -n "user.par2.blake2b" --only-values -- "${par}.vol0+1.par2" 2>/dev/null )"
+			setfattr -x "user.par2.blake2b" -- "${par}.par2" "${par}.vol0+1.par2" &>/dev/null
+		else
+			if process_recovery_make_failed "mkpar: ${item}: Par2 creation FAILED"; then return 1; fi
+		fi
+		if ! quadsum --no-dir -- "${par}.par2" "${par}.vol0+1.par2" >> "${dir}/QUADSUM" 2>/dev/null; then
+			if process_recovery_make_failed "quadsum: ${item}: Par2 checksums FAILED"; then return 1; fi
+		fi
+		hash_par_tmp_one=$( grep -m 1 -- "${par##*"/"}.par2" "${dir}/QUADSUM" 2>/dev/null )
+		hash_par_tmp_two=$( grep -m 1 -- "${par##*"/"}.vol0+1.par2" "${dir}/QUADSUM" 2>/dev/null )
+		hash_par_new="${hash_par_tmp_one##*" "}${hash_par_tmp_two##*" "}"
+		unset "hash_par_tmp_one" "hash_par_tmp_two"
+		case "${hash_par_old}" in
+			"${hash_par_new}")
+				unset "hash_par_old" "hash_par_new"
+			;;
+			*)
+				if process_recovery_make_failed "mkpar: ${item}: Par2 verification FAILED"; then return 1; fi
+			;;
+		esac
+		if [ -s "${dir}/QUADSUM.sig" ]; then
+			hash_old=$( sha512sum -- "${dir}/QUADSUM" 2>/dev/null )
+			hash_old="${hash_old%%" "*}"
+			if quadsum -cs -- "${dir}/QUADSUM.sig" 2>/dev/null; then
+				if ! rm -f -- "${dir}/QUADSUM.sig" 2>/dev/null; then
+					if process_recovery_make_failed "quadsum: ${item}: FAILED"; then return 1; fi
+				fi
+				hash_new=$( sha512sum -- "${dir}/QUADSUM" 2>/dev/null )
+				hash_new="${hash_old%%" "*}"
+				if ! quadsum -sn -- "${dir}/QUADSUM" 2>/dev/null; then
+					if process_recovery_make_failed "quadsum: ${item}: Secure signing FAILED"; then return 1; fi
+				fi
+				case "${hash_old}" in
+					"${hash_new}")
+						return 0
+					;;
+					*)
+						if process_recovery_make_failed "quadsum: ${item}: Secure signing FAILED"; then return 1; fi
+					;;
+				esac
+			else
+				if ! rm -f -- "${dir}/QUADSUM.sig" 2>/dev/null; then
+					echo "quadsum: ${item}: FAILED" 1>&2
+					code=1
+					return 1
+				fi
+			fi
+		else
+			if ! quadsum -sn -- "${dir}/QUADSUM" 2>/dev/null; then
+				if process_recovery_make_failed "quadsum: ${item}: Secure signing FAILED"; then return 1; fi
+			fi
+		fi
+	else
+		if process_recovery_make_failed "quadsum: ${item%%*"/"}: Data checksums FAILED"; then return 1; fi
+	fi
+fi >/dev/null 
+}
+
+process_xattr_make() {
+local "date"
+case "${is_xattrs:-"0"}" in
+	0)
+		return 0
+	;;
+esac
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if type b2sum >/dev/null 2>&1; then
+	case "${make:-"0"}" in
+		1)
+			case "${#hash}" in
+				128)
+					if setfattr -n "${hash_mark}" -v "${hash}" -- "${1}" 2>/dev/null; then
+						echo "xattrs: ${1}: BLAKE2b is created" 1>&2
+					else
+						echo "xattrs: ${1}: Failed on creation" 1>&2
+						setfattr -x "${hash_mark}" -- "${1}" 2>/dev/null
+						code=1
+						return 1
+					fi
+				;;
+			esac
+		;;
+	esac
+fi
+}
+
+process_xattr_check() {
+local "hash_old"
+case "${is_xattrs:-"0"}" in
+	0)
+		return 0
+	;;
+esac
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if type b2sum >/dev/null 2>&1; then
+	hash_old=$( getfattr --only-values -n "${hash_mark}" -- "${1}" )
+	case "${hash_old:-""}" in
+		"")
+			echo "${1}: FAILED"
+			code=1
+			return 1
+		;;
+		"${hash}")
+			echo "${1}: OK"
+			return 0
+		;;
+		*)
+			echo "${1}: FAILED"
+			code=1
+			return 1
+		;;
+	esac
+fi
+}
+
+process_xattr() {
+local "date_now" "date_old"
+case "${is_xattrs:-"0"}" in
+	0)
+		return 1
+	;;
+esac
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if type attr >/dev/null 2>&1; then
+	if getfattr -- "${1}" >/dev/null 2>&1; then
+		hash=$( b2sum -- "${1}" )
+		hash="${hash%%"  "*}"
+		if getfattr --only-values -n "${hash_mark}" -- "${1}" >/dev/null 2>&1; then
+			return 0
+		else
+			setfattr -x "${hash_mark}" -- "${1}" 2>/dev/null
+			make=1
+			return 1
+		fi
+	else
+		return 1
+	fi
+else
+	return 1
+fi
+}
+
+process_seven_zip() {
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if type 7z >/dev/null 2>&1; then
+	if 7z t -- "${1}" >/dev/null 2>&1; then
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+		echo "${1}: OK"
+	else
+		echo "${1}: FAILED"
+		code=1
+	fi
+else
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+fi
+}
+
+process_br() {
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if type brotli >/dev/null 2>&1; then
+	if brotli -t -- "${1}" >/dev/null 2>&1; then
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+		echo "${1}: OK"
+	else
+		echo "${1}: FAILED"
+		code=1
+	fi
+else
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+fi
+}
+
+process_bz_two() {
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if bzip2 -tf /dev/stdin < "${1}" >/dev/null 2>&1; then
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+	echo "${1}: OK"
+else
+	echo "${1}: FAILED"
+	code=1
+fi
+}
+
+process_tmp_clean() {
+case "${dtmp:-""}" in
+	"/tmp/${name}-"????????????)
+		rm -fr -- "${dtmp}"
+	;;
+esac
+unset "dtmp"
+case "${1:-"0"}" in
+	130)
+		exit 130
+	;;
+esac
+}
+
+process_deb() {
+local "dpath" "dtmp"
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+dpath=$( realpath --no-symlinks -- "${1}" )
+dtmp=$( mktemp -p "/tmp/" -d "${name}-XXXXXXXXXXXX" 2>/dev/null )
+if [ -d "${dtmp:-""}" ]; then
+	trap 'process_tmp_clean 130' INT
+else
+	return 1
+fi
+if type ar >/dev/null 2>&1; then
+	db_sum=$( cd -- "${dtmp}" 2>/dev/null && ln -s -- /dev/stdout debian-binary 2>/dev/null && ar x -- "${dpath}" debian-binary 2>/dev/null | md5sum )
+	db_sum="${db_sum%%" "*}"
+	case "${db_sum}" in
+		3cf918272ffa5de195752d73f3da3e5e)
+			:
+		;;
+		*)
+			process_tmp_clean
+			echo "${1}: FAILED"
+			code=1
+			return 1
+		;;
+	esac
+else
+	process_tmp_clean
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+	return 0
+fi
+if ! ( cd -- "${dtmp}" 2>/dev/null && mv -- debian-binary control.tar.xz 2>/dev/null && ar x -- "${dpath}" control.tar.xz 2>/dev/null | xz -dcf /dev/stdin >/dev/null 2>&1 ); then
+	process_tmp_clean
+	echo "${1}: FAILED"
+	code=1
+	return 1
+fi
+if ( cd -- "${dtmp}" 2>/dev/null && mv -- control.tar.xz data.tar.xz 2>/dev/null && ar x -- "${dpath}" data.tar.xz 2>/dev/null | xz -dcf /dev/stdin >/dev/null 2>&1 ); then
+	process_tmp_clean
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+	echo "${1}: OK"
+else
+	process_tmp_clean
+	echo "${1}: FAILED"
+	code=1
+fi
+}
+
+process_gz() {
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if gzip -tf /dev/stdin < "${1}" >/dev/null 2>&1; then
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+	echo "${1}: OK"
+else
+	echo "${1}: FAILED"
+	code=1
+fi
+}
+
+process_xz() {
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if xz -dcf /dev/stdin < "${1}" >/dev/null 2>&1; then
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+	echo "${1}: OK"
+else
+	echo "${1}: FAILED"
+	code=1
+	return 1
+fi
+}
+
+process_media() {
+local "video_check"
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if type ffmpeg >/dev/null 2>&1; then
+	video_check=$( ffmpeg -v 5 -i "${1}" -f null - 2>&1 )
+	case "${video_check:-""}" in
+		"")
+			process_recovery_make "${1}"
+			process_xattr_make "${1}"
+			fixstamp "${1}"
+			echo "${1}: OK"
+		;;
+		*)
+			echo "${1}: FAILED"
+			code=1
+		;;
+	esac
+else
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+fi
+}
+
+process_pdf() {
+local "line" "exe" "dir" "dpath"
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+case "${no_excl:-"0"}" in
+	0)
+		line=$( echo "${pdf_exceptions}" | grep -m 1 -- "  ${1##*"/"}$" 2>/dev/null )
+	;;
+	1)
+		line=""
+	;;
+esac	
+case "${line:-""}" in
+	"")
+	if type gs >/dev/null 2>&1; then
+		if gs -dNOPAUSE -dBATCH -sDEVICE=nullpage -- "${1}" >/dev/null 2>&1; then
+			process_recovery_make "${1}"
+			process_xattr_make "${1}"
+			fixstamp "${1}"
+			echo "${1}: OK"
+		else
+			echo "${1}: FAILED"
+			code=1
+		fi
+	else
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+	fi
+	;;
+	*"  Manual.pdf")
+		exe="setup_powerslave_1.0_(42515).exe"
+		dpath=$( realpath --no-symlinks -- "${1}" )
+		if ! find "${dpath%"/"*}" -maxdepth 2 -name "${exe}" | grep -m 1 -- '^'; then
+			return 0
+		fi >/dev/null 2>&1
+	;;
+	*)
+		if echo "${line}" | sha1sum -c; then
+			process_recovery_make "${1}"
+			process_xattr_make "${1}"
+			fixstamp "${1}"
+		else
+			code=1
+		fi
+	;;
+esac
+}
+
+process_png() {
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if type pngcheck >/dev/null 2>&1; then
+	if pngcheck -q < "${1}" >/dev/null 2>&1; then
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+		echo "${1}: OK"
+	else
+		echo "${1}: FAILED"
+		code=1
+	fi
+else
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+fi
+}
+
+process_jpg() {
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if type jpeginfo >/dev/null 2>&1; then
+	if jpeginfo -c -- "${1}" >/dev/null 2>&1; then
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+		echo "${1}: OK"
+	else
+		echo "${1}: FAILED"
+		code=1
+	fi
+else
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+fi
+}
+
+process_rar() {
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if type unrar >/dev/null 2>&1; then
+	case "${1}" in
+		*.part1.rar|*.part01.rar|*.part001.rar|*.part0001.rar|*.part00001.rar)
+			:
+		;;
+		*.part[2-9].rar|*.part[0-9][0-9].rar|*.part[0-9][0-9][0-9].rar|*.part[0-9][0-9][0-9][0-9].rar|*.part[0-9][0-9][0-9][0-9][0-9].rar)
+			process_recovery_make "${1}"
+			process_xattr_make "${1}"
+			fixstamp "${1}"
+			return 0
+		;;
+		*.rar)
+			:
+		;;
+	esac
+	if unrar t -- "${1}" >/dev/null 2>&1; then
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+		echo "${1}: OK"
+	else
+		echo "${1}: FAILED"
+		code=1
+	fi
+else
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+fi
+}
+
+process_zip_warn() {
+local "line"
+while read -r "line"; do
+	case "${line#"	"}" in
+		"zip warning: "*)
+			return 1
+		;;
+	esac
+done
+return 0
+}
+
+process_zip() {
+local "dpath" "dtmp" "one"
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+case "${strict:-"0"}" in
+	0)
+		one=1
+	;;
+	1)
+		one=0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if type zip >/dev/null 2>&1; then
+	dpath=$( realpath --no-symlinks -- "${1}" )
+	dtmp=$( mktemp -p "/tmp/" -d "${name}-XXXXXXXXXXXX" 2>/dev/null )
+	if [ -d "${dtmp:-""}" ]; then
+		trap 'process_tmp_clean 130' INT
+	else
+		return 1
+	fi
+	if ( cd -- "${dtmp}" 2>/dev/null && ln -s -- /dev/null "${1##*"/"}" 2>/dev/null && zip -FF "${dpath}" --out "${1##*"/"}" 2>/dev/null | process_zip_warn ); then
+		process_tmp_clean
+	else
+		process_tmp_clean
+		echo "${1}: FAILED"
+		code=1
+		return 1
+	fi
+fi
+unzip -qp /dev/stdin < "${1}" >/dev/null 2>&1
+case "${?}" in
+	"${one}"|0)
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+		echo "${1}: OK"
+	;;
+	*)
+		echo "${1}: FAILED"
+		code=1
+	;;
+esac
+}
+
+process_zstd() {
+case "${dry_run:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+if ! process_local_checksums "${1}"; then return 1; fi
+if process_xattr "${1}"; then
+	if process_xattr_check "${1}"; then
+		return 0
+	else
+		code=1
+		return 1
+	fi
+fi
+if type zstd >/dev/null 2>&1; then
+	if zstd -t -- "${1}" >/dev/null 2>&1; then
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+		echo "${1}: OK"
+	else
+		echo "${1}: FAILED"
+		code=1
+	fi
+else
+	process_recovery_make "${1}"
+	process_xattr_make "${1}"
+	fixstamp "${1}"
+fi
+}
+
+process() {
+local "type" "make"
+type="${data##*"."}"
+make=0
+hash=0
+case "${no_xattrs:-"0"}" in
+	1)
+		if getfattr --only-values -n "${hash_mark}" -- "${1}" >/dev/null 2>&1; then
+			if setfattr -x "${hash_mark}" -- "${1}" 2>/dev/null; then
+				echo "xattrs: ${1}: BLAKE2b data is deleted" 1>&2
+			else
+				echo "xattrs: ${1}: BLAKE2b deletion failed" 1>&2
+				code=1
+			fi
+		else
+			echo "xattrs: ${1}: No attributes are found" 1>&2
+		fi
+	;;
+esac
+case "${data##*"/"}" in
+	7[zZ]|[eE][xX][eE]|[bB][iI][nN]|[tT][bB][rR]|[bB][rR]|[tT][bB][zZ]|[bB][zZ]\
+	|[tT][bB][zZ]2|[bB][zZ]2|[dD][eE][bB]|[tT][gG][zZ]|[gG][zZ]|[tT][xX][zZ]\
+	|[xX][zZ]|[aA][vV][iI]|[mM][pP]4|[mM][kK][vV]|[pP][dD][fF]|[pP][nN][gG]\
+	|[jJ][pP][gG]|[jJ][pP][eE][gG]|[rR][aA][rR]|[aA][pP][kK]|[zZ][iI][pP]\
+	|[zZ][sS][tT]|[zZ][sS][tT][dD]\
+	)
+		if ! process_local_checksums "${1}"; then return 1; fi
+		if process_xattr "${1}"; then
+			if process_xattr_check "${1}"; then
+				return 0
+			else
+				code=1
+				return 1
+			fi
+		fi
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+		return 0
+	;;
+esac
+case "${type}" in
+	7[zZ])
+		process_seven_zip "${1}"
+	;;
+	[eE][xX][eE])
+		process_exe "${1}"
+	;;
+	[bB][iI][nN])
+		process_bin "${1}"
+	;;
+	[tT][bB][rR]|[bB][rR])
+		process_br "${1}"	
+	;;
+	[tT][bB][zZ]|[bB][zZ]|[tT][bB][zZ]2|[bB][zZ]2)
+		process_bz_two "${1}"
+	;;
+	[dD][eE][bB])
+		process_deb "${1}"
+	;;
+	[tT][gG][zZ]|[gG][zZ])
+		process_gz "${1}"
+	;;
+	[tT][xX][zZ]|[xX][zZ])
+		process_xz "${1}"
+	;;
+	[aA][vV][iI]|[mM][pP]4|[mM][kK][vV])
+		process_media "${1}"
+	;;
+	[pP][dD][fF])
+		process_pdf "${1}"
+	;;
+	[pP][nN][gG])
+		process_png "${1}"
+	;;
+	[jJ][pP][gG]|[jJ][pP][eE][gG])
+		process_jpg "${1}"
+	;;
+	[rR][aA][rR])
+		process_rar "${1}"
+	;;
+	[aA][pP][kK]|[zZ][iI][pP])
+		process_zip "${1}"
+	;;
+	[zZ][sS][tT]|[zZ][sS][tT][dD])
+		process_zstd "${1}"
+	;;
+	[pP][aA][rR]2|[sS][iI][gG]|MD5SUM|SHA1SUM|SHA256SUM|SHA512SUM|TRIOSUM|QUADSUM)
+		return 0
+	;;
+	*)
+		if ! process_local_checksums "${1}"; then return 1; fi
+		if process_xattr "${1}"; then
+			if process_xattr_check "${1}"; then
+				return 0
+			else
+				code=1
+				return 1
+			fi
+		fi
+		process_recovery_make "${1}"
+		process_xattr_make "${1}"
+		fixstamp "${1}"
+	;;
+esac
+}
+
+main() {
+local "name"
+name="${0##*"/"}"
+hash_mark="user.${name}.hash"
+pkgchk "awk" "b2sum" "bzip2" "find" "grep" "gzip" "md5sum" "osslsigncode" "realpath" "sed" "stat" "tac" "unzip" "wc" "xz"
+case "${no_excl:-"0"}" in
+	0)
+		data_exceptions
+	;;
+	1)
+		time_exceptions=0
+		pdf_exceptions=0
+		exe_exceptions=0
+		bin_exceptions=0
+	;;
+esac
+setcert
+setopt "${@}"
+case "${dry_run:-"0"}" in
+	1)
+		case "${code:-"0"}" in
+			1)
+				echo "${name}: dry-run: FAILED"
+			;;
+			0)
+				echo "${name}: dry-run: OK"
+			;;
+		esac
+	;;
+esac
+exit "${code:-"0"}"
+}
+
+data_exceptions() {
+time_exceptions="\
+201503031543.46  setup_colin2005.exe
+201501021821.51  setup_dark_fall_lights_out.exe
+201805160944.17  setup_defcon_1.6_(20793).exe
+202001212328.00  setup_forager_4.0.3_(35567).exe
+201501022141.24  setup_full_spectrum_warrior_2.1.0.7.exe
+202106090751.01  setup_jupiter_hell_0.9.10d_(64bit)_(47671).exe
+201501081626.48  setup_obscure.exe
+201503061550.33  setup_republic_the_revolution.exe
+201501090641.17  setup_revolt_2.1.0.5.exe
+202106091443.29  setup_scythe_digital_edition_1.7.12_(46982).exe
+202106051222.21  setup_not_for_broadcast_2021.06.04a_(64bit)_(47580).exe
+202010131024.04  setup_talisman_character_-_vampire_74912_(41937).exe
+201503061346.27  setup_toca_3.exe
+202106071633.22  setup_the_guild_3_ea_0.9.14_622947_(47632).exe
+202106040740.52  setup_witchaven_ii_blood_vengeance_1.0_(47551).exe
+201501090515.01  setup_wizardry7dos_2.0.0.11.exe
+
+"
+pdf_exceptions="\
+331e0d62e010ce5b9a56d303f5d6c572a3a651df  blade_runner_conceptual_art.pdf
+43ba722c0307f8c045170323a1690bdebbf976ac  blade_runner_manual_english.pdf
+52457bfaa14ed6210023f5dc599649d9e8f258fd  blade_runner_manual_french.pdf
+efcfcb8392ad7f0f435e3117273d6ae704b772de  blade_runner_manual_german.pdf
+5a525da567018d1e92dcda1c592cce62830286ce  blade_runner_manual_polish.pdf
+2e66fe73015955d9e9b1a688fc23bc89beca89e7  Desperados_Artbook_Digital.pdf
+aa356cf6a307d45e4c7a1b5c0546da73911da4f2  emperor_of_the_fading_suns_manual.pdf
+7a412d43f5c8eacbf4cc4086db8e3e2c14cab275  eternam_manual.pdf
+b630870d16e5d37b48b347b031b897c64d433f1f  Manual.pdf
+486ac0741ef18b9a150c6f4f58556b7917604d8f  ShadowrunReturnsAnthology.pdf
+c72b1e7231adc324e6e8c2de2ceb79d9ef55f3e7  warhammer_40000_da_orks_manual.pdf
+"
+
+exe_exceptions="\
+7e0967f36085171aa16fa29662686d3bb644c949  setup_colin2005.exe
+239f8628061e59fd0a09b4c73c536174896a8c46  setup_dark_fall_lights_out.exe
+eaf746d055bddfadee0bdf56d4fb1f19cef4d04b  setup_obscure.exe
+39329e5c5856eda4143725b55bd4d18b832bc381  setup_republic_the_revolution.exe
+dc38029e24046fc9476a20796ed207a3a887fe2d  setup_toca_3.exe
+
+"
+bin_exceptions="\
+ff235c2bcd887fc3d59af92aa780b0ed  setup_15_days_1.0_(19285)-1.bin
+896d1e41bca56cb9bc9587f151f75729  setup_bloodrayne_2_1.0_(19403)-1.bin
+3901d740c9071b43eae5b5e3566ef4c6  setup_broken_sword_3_-_the_sleeping_dragon_1.0_(19115)-1.bin
+3931964c5eb08e8e09eb22c5860a4f9f  setup_colin2005-1.bin
+9c00ae95ab1ebc512fce9c32b5d7bab4  setup_colin2005-2.bin
+6392568bcc7c4a4613e09cdbb40afafd  setup_deadlight_directors_cut_gog-2(cs)_(19167)-1.bin
+fa080fbdd39369969be4ac54c2aa7bd2  setup_deadlight_directors_cut_gog-2(cs)_(19167)-2.bin
+1a62dce3a32d0d596bd708a259771a12  setup_expeditions_viking_1.0.7.4_(19111)-1.bin
+b2791ee5edaa1c5ed93762d638ddec39  setup_expeditions_viking_1.0.7.4_(19111)-2.bin
+f07fdc4bf6a8e45087b4ffe29ac776a3  setup_ken_folletts_the_pillars_of_the_earth_1.1.703_(19286)-1.bin
+00df9f73b69a8d20d846a44e5a1fefc2  setup_ken_folletts_the_pillars_of_the_earth_1.1.703_(19286)-2.bin
+45a14f97058182490ca043c35ce652a4  setup_ken_folletts_the_pillars_of_the_earth_1.1.703_(19286)-3.bin
+0732121bf0da7db6dc6f5e5a3bc8705b  setup_little_nightmares_1.0.43.1_(18471)-1.bin
+cf97be95a78dbf12584cae413eec7f6a  setup_lucius_1.043_hotfix_(19092)-1.bin
+a6e0f1035d5e2f938b3f9cad9f4f973d  setup_mark_of_the_ninja_1.0_(19120)-1.bin
+c65f85d535a913a47bc26932183477f2  setup_miasmata_1.0_(19144)-1.bin
+a8b456fc088be36830d9ab6d067830c1  setup_obscure-1.bin
+52b7e86cd78582338e322c357f726da0  setup_obscure-2.bin
+6ee12e31817ed2700baa10f8da22d4ab  setup_outlast_2_gog-4_(19597)-1.bin
+69f9e7b84863494c54e886137be2c729  setup_outlast_2_gog-4_(19597)-2.bin
+c2bc4f41fb1c01fb7c6eb95d8dae1240  setup_outlast_2_gog-4_(19597)-3.bin
+d3a9545ee47d361e8a17f82b908e5a81  setup_outlast_2_gog-4_(19597)-4.bin
+1bd87af6c2bfb508ad922e14cb6fb696  setup_outlast_2_gog-4_(19597)-5.bin
+202b6af4255fd95e43c1b89d3ec93e0b  setup_outlast_2_gog-4_(19597)-6.bin
+7e014ef5b74d1754b598a7ad81ccce6e  setup_post_mortem_1.0_(19454)-1.bin
+c589b12a4da2a54574cdedccf75e6ec9  setup_quern_-_undying_thoughts_1.2.0_hotfix2_(19136)-1.bin
+e78488e9df841fc144023da9e1982c48  setup_the_mystery_of_the_druids_1.0_(19168)-1.bin
+d12388215b70f2ccc9b033e8e323d392  setup_the_raven_remastered_1.1.0.654_(19262)-1.bin
+01d315ba1f8808f7fa2f6210cdb8d17a  setup_the_raven_remastered_1.1.0.654_(19262)-2.bin
+d361cf5faea20ec79562d1321568e9c6  setup_the_raven_remastered_1.1.0.654_(19262)-3.bin
+90a24fed5d8e2e52ab1bf2de84349984  setup_the_witness_21-12-2017_(19091)-1.bin
+4187245c9d32a7ddd930f26fc75dc58d  setup_toca_3-1.bin
+4b3b4235d439a2409dbb108981abc147  setup_toca_3-2.bin
+d6a5a69f5f6a5506adaea2c80835b183  setup_toca_3-3.bin
+9401fc55950a8b8e5726e669163f7652  setup_ufo_aftershock_1.2_(19449)-1.bin
+53eefd9b1e788cb1fdb068b0f34e9115  setup_ufo_aftermath_1.4_(19448)-1.bin
+4754a97cfa22f7a4861961f48896b5f0  setup_mafia_iii_1.090.0_(19569)-1.bin
+aa5eaf4aef380c740caa81a78563141c  setup_mafia_iii_1.090.0_(19569)-2.bin
+086d4148409c1601387ef28b0935b974  setup_mafia_iii_1.090.0_(19569)-3.bin
+6c76acf1fef2943b909829f8785f8634  setup_mafia_iii_1.090.0_(19569)-4.bin
+f91d1aec2b776f55c3467305047dd01a  setup_mafia_iii_1.090.0_(19569)-5.bin
+a070c7c3fa3a5cdf6f40f02e577ac75f  setup_mafia_iii_1.090.0_(19569)-6.bin
+c15aad8d2e8d958c8744107fbc6bc995  setup_mafia_iii_1.090.0_(19569)-7.bin
+18de8744ef029e0512ccd06daafd255b  setup_mafia_iii_1.090.0_(19569)-8.bin
+3838974cd7f46cd4f400f5f54df509ea  setup_mafia_iii_1.090.0_(19569)-9.bin
+862034c31022d7d4908e4902ad6f6bb7  setup_mafia_iii_1.090.0_(19569)-10.bin
+1af264bc5d0eac6eef59e14f9e9df61c  setup_mafia_iii_1.090.0_(19569)-11.bin
+59ccb31ef701f48d772406b782349213  setup_mafia_iii_1.090.0_(19569)-12.bin
+9a7e9db959199ef24ae5adef7810ab52  setup_mafia_iii_1.090.0_(19569)-13.bin
+3bcafdcd6d92a3ede2a8c73df72b6c39  setup_sniper_elite_-_berlin_1945_1.0_(19500)-1.bin
+
+"
+}
+
+setcert() {
+cert_fingerprints="\
+052531b9cf17c6728d43bb405a657d81a216cf36b4e708bd1fc87df8c901d48de88eb2f81fbaea5e624aaf3e494a438287a6e4ef9604deae0f95749709448cd1
+0753a4656853f22bb1b04b8c4946466be254978f9740574c0cd4c0317b68052fa2d3276bd63bd676a4358ac877ebe9975dc8298beb1a338fad1797d43afe52b8
+0c83f46c64e3371a493c88219d9c6e9094183a11da7ef8d978c07ab9d25a0f944a3ae09415f85ddd384cbc56000b3126eb2e52f6d9098fd8638e0b68933e2dda
+172881beb181466cf6ca9cdfddb5f0a69d2192fa3488c055f5a6a223f7c6cbe2479d90155a0fc162594d9d3965bdeef456b777e68b15dadd0c50435e8ddabd76
+1c205d9c767bf686714ad768e5eb5419c21c0e4e60f94b0b8fb0dea58629249d8b73dc0874176ed160bb1b5ca8d2fe4681ea4ed9a4a1064762db855c07a55377
+254cfd3b2e881618243b4030982e27eceff0b3a443f9d099d3b63fa34245d511c6d5e63276600e19a90604c7ca192b296dbd4f9eec198926028def14d0a32684
+29a8635ef232324cc4af6810db74e14d87a4bc75f0b67c15e3e0332e359b1eb5c6f60d5df891827a0752a4f02d7d9f0d347c4adcd8ea58b3c38fc350f1503f2e
+2eab8693cb9d94d343f8ac74dafc7966e29136e27079c8440648aa193cf43745e3d3530c0b583c57887caec1c41dfd9874b1ff215c5fb5bdba2c6263c7d215fa
+30e8bb9ab201f97b5b3e7c6158ad1aca2e589ff522bea275418474d42a78090d207abb5fa977609dcf106998758e7c05d5f327d553ffe57c4363f2d26b7505b7
+31761b0b6434c1af8ff0a834bbf64032b111ada2dbdb125ccc8674036aa6568148ec31417260a17d30dcf57bce3fae8a1d6ec3eb337446fd09e842fa824ae2fd
+3bab33b9276c01f7fc9f77a39840c90134bbccbe1dc8dd0ccae9ced564f48879a4f2e82d9da9eb754713a6751cfc6965164b92926c49c313a1197d257729c6bc
+44a050028b6f71eb10ea72df3ee2473416dc9724862d9feb288235b7bfed8ef3d6ee651eb0013f6b40a15008701bf8863c86b922d9afdcc68837857e52570af3
+47644361f16dcb02635921739a7fd9bd550c783571fb0fc70006f5f58fc103de0668617f3225fa7403895943b5a4615160d981675073273e7087b9a1db2e5207
+488436496d89de918a33d5efa1d56f06e20ffb3b7f094e0a97b0caaf10680cc1fa5957b3b28f7ce17888340ab03eccd4cc56a4f5393fe6bc6adc3b532b6dd353
+4954d9c3c3ff8d9ead4ed8feca4ea34f06fd2f3849581eaee597ca55249ddcb6e3908a739c64ca9bbc6a812fb78ba4105bb284b6707d1d4221aa474d0557c1cb
+51befa890fe518d28cdae8a6c016f0209d7f123a31d929251536bf9a2c8fc2cd8a1fc8ef55a1c1d7d981ab4aa78366844365d90dfb5b4d15865c5cdd6b2a083e
+5584a7d02923192e720d54ffc9f69deb32850b42b7c04a0d115edd9f2acbc30fb76524c2487ee1f130bc90b9572428bfa5772bb5290cc729f77534fe98a73cf4
+5da6f9ad4d8d15e023e7f41981ac62446d9f59944ee5b17a809670e7cd42ad8f25884075e986269bed72a88aeae65c11ff648b8856dced42d1ce8889a342cf85
+76b890df3075ae4d1df271ca5556fe0e93592410ed4caa4dcf23938e787a3b690080842921ee8f19029e1a514f20cd67997bcadaa61e7f629ab8024a508d1f45
+78bd304669f32ef48443af403678fd91c7aaa3076c369f40dfdb57eee337cd9e9fb5c076bd17761180f1eab1f7ace2fc3f2d6bf3044ea42ead7311f37c6205f4
+98bd1464bcce48b82306968478b085d9699ba05bd0cde3c8090e9ba304bd91ba57448df87cedd9518d147c762734f439c22d274e9f73f8d2ee0e980375433482
+b4b6d8a358524ee601ed5ee95cc21f6e77ea432e9005fbb67def6e0722100d5b122578e495adbe47583dc9cea21273646eb30cf328bf85244f543f068cebc104
+c3400f5e4816a7b9d7efe51c601400f4bdb357d7ae1097f50e224096821eb6db72feabb360dc5984302836958b88234e5fc8506a581ef29271ab249c4747e6d4
+cc8dee5b2853375b49367dd9ed98ba186654d925873bbff3901f298df22f0fcd27e656570315b5bde583dc34248ecb4b299550a8cc533de67f90a104a7ad5b5e
+ce46602dd8ec8959c1700074efad20e35303b5e8f292c755190c9f331675a9656fba7a37254f6a113d4291ad03060fa3a623beb4e31ef52ecc145e6eb87b61b5
+e0934604d6bfdfa30a2fa66922f129a74f788a11b2cfb0bbe16294afd77c58d4cf5ce2656ec328cfd71bfc1fa5005d01d9271d3c86ad7de33e67c24e19496764
+e5adc4c7aa7dca035a0d9d641ea77a79cb37c7ab1cb4e39e681cba869ea8e1adb2744084cf48107fdafd4394d6e8ec2d25e10d8da908fdfb0a1479031c6fa6bc
+
+"
+}
+
+main "${@}"
+}
