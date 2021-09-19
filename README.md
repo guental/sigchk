@@ -27,7 +27,9 @@ sigchk [OPTION]... [FILE]...
 ***-x, --xattrs*** use BLAKE2b extended attributes
 
 ***-dx, --delete-xattrs*** delete BLAKE2b extended attributes
-        
+
+***-v, --verbose*** verbose mode
+
 ***-q, --quiet*** quiet mode
 
 # Requirements
