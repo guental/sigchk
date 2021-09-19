@@ -15,6 +15,22 @@ printf -- '%s\n' "${@}" 1>&2
 code=1
 }
 
+echover() {
+case "${verbose:-"0"}" in
+	1)
+		case "${@}" in
+			"${echover_past_msg:-$'\r\n'}")
+				return 0
+			;;
+			*)
+				printf -- '%s\n' "${@}" 1>&2
+			;;
+		esac
+		echover_past_msg="${@}"
+	;;
+esac
+}
+
 pkgchk() {
 local "count" "line" "type"
 case "${#}" in
@@ -116,6 +132,8 @@ text="${text}
         display this help and exit
       --version
         output version information and exit
+  -v, --verbose
+        verbose mode
   -q, --quiet
         quiet mode"
 printf -- '%s\n' "${text}"
@@ -126,7 +144,7 @@ setopt() {
 local "OPT" "OPTARG" "OPTERR" "OPTIND"
 OPTIND=1
 OPTERR=0
-while getopts "tTpPdDsSxXhHqQ-:" OPT; do
+while getopts "vVtTpPdDsSxXhHqQ-:" OPT; do
 	case "${OPT}" in
 		t|T)
 			timestamp=1
@@ -148,6 +166,9 @@ while getopts "tTpPdDsSxXhHqQ-:" OPT; do
 		;;
 		q|Q)
 			exec 2>/dev/null
+		;;
+		v|V)
+			verbose=1
 		;;
 		-)
 			case "${OPTARG}" in
@@ -195,11 +216,14 @@ while getopts "tTpPdDsSxXhHqQ-:" OPT; do
 					show_help
 				;;
 				version)
-					printf -- '%s\n' "${name} ${version:-"1.1.4"}"
+					printf -- '%s\n' "${name} ${version:-"1.1.5"}"
 					exit 0
 				;;
 				q|Q|quiet)
 					exec 2>/dev/null
+				;;
+				v|V|verbose)
+					verbose=1
 				;;
 				*)
 					show_help 1 1>&2
@@ -255,38 +279,44 @@ fixstamp() {
 	local "stamp" "funccode"
 	case "${time_exceptions}" in
 		*"${1##*"/"}"*)
+			echover "${name}: ${1}: Is an exception"
 			stamp=$( echo "${time_exceptions}" | grep -m 1 -- "  ${1##*"/"}$" )
 			stamp="${stamp%%" "*}"
 		;;
 		*)
 			stamp=$( tac "${1}" | cat -e | exe_stamp_cut | sed -nE 's/.*([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})Z0.*/20\1-\2-\3T\4:\5:\6+00:00$/p' )
 			stamp="${stamp%%'$'*}"
-			case "${stamp:-""}" in
-				"")
-					stamp=""
-				;;
-				*)
-					stamp=$( date -d "${stamp}" -- '+%Y%m%d%H%M.%S' )
-				;;
-			esac
 		;;
 	esac
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
+			stamp=""
+		;;
+		*)
+			stamp=$( date -d "${stamp}" -- '+%Y%m%d%H%M.%S' )
+		;;
+	esac
+	case "${stamp:-""}" in
+		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
-	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
+	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
+		echover "timestamp: ${1}: ${stmp_msf}"
 		funccode=1
 	fi
 	if [ -s "${1%".exe"}-1.bin" ]; then
 		for bin in "${1%".exe"}-"*".bin"; do
-			if ! touch -t "${stamp}" -- "${bin}" 2>/dev/null; then
+			if ! touch -cmt "${stamp}" -- "${bin}" 2>/dev/null; then
+				echover "timestamp: ${1}: ${stmp_msf}"
 				funccode=1
 			fi
 		done
 	elif [ -s "${1%".exe"}.bin" ]; then
-		if ! touch -t "${stamp}" -- "${1%".exe"}.bin" 2>/dev/null; then
+		if ! touch -cmt "${stamp}" -- "${1%".exe"}.bin" 2>/dev/null; then
+			echover "timestamp: ${1}: ${stmp_msf}"
 			funccode=1
 		fi
 	fi
@@ -305,6 +335,7 @@ fixstamp() {
 	stamp="${stamp##*'<xmp:CreationDate>'}"
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			stamp=""
 		;;
 		*)
@@ -313,11 +344,12 @@ fixstamp() {
 	esac
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
-	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
-		return 1
+	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
+		echover "timestamp: ${1}: ${stmp_msf}"
 	fi
 	}
 	
@@ -347,11 +379,12 @@ fixstamp() {
 	stamp=$( 7z l -- "${1}" | seven_zip_date )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
-	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
-		return 1
+	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
+		echover "timestamp: ${1}: ${stmp_msf}"
 	fi
 	}
 	
@@ -375,11 +408,12 @@ fixstamp() {
 	stamp=$( echo "${stamp}" | sort -rn | tar_stamp_head )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
-	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
-		return 1
+	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
+		echover "timestamp: ${1}: ${stmp_msf}"
 	fi
 	}
 	
@@ -388,17 +422,19 @@ fixstamp() {
 	stamp=$( 7z l -- "${1}" | grep -m 1 -- "^Modified = " )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	stamp=$( echo "${stamp}" | sed -nE 's/Modified = ([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})/\1\2\3\4\5.\6/p' )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
-	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
-		return 1
+	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
+		echover "timestamp: ${1}: ${stmp_msf}"
 	fi
 	}
 	
@@ -417,11 +453,12 @@ fixstamp() {
 	stamp=$( echo "${stamp}" | sort -rn | tar_stamp_head )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
-	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
-		return 1
+	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
+		echover "timestamp: ${1}: ${stmp_msf}"
 	fi
 	}
 	
@@ -433,6 +470,7 @@ fixstamp() {
 	stamp=$( tar --list --verbose --full-time -f "${1}" )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
@@ -440,11 +478,12 @@ fixstamp() {
 	stamp=$( echo "${stamp}" | sort -rn | tar_stamp_head )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
-	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
-		return 1
+	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
+		echover "timestamp: ${1}: ${stmp_msf}"
 	fi
 	}
 
@@ -456,17 +495,19 @@ fixstamp() {
 	stamp=$( identify -verbose -- "${1}" | grep -m 1 -- '^    exif:DateTime: ' )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	stamp=$( echo "${stamp}" | sed -nE 's/    exif:DateTime: ([0-9]{4}):([0-9]{2}):([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})/\1\2\3\4\5.\6/p' )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
-	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
-		return 1
+	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
+		echover "timestamp: ${1}: ${stmp_msf}"
 	fi
 	}
 
@@ -478,6 +519,7 @@ fixstamp() {
 	stamp=$( ffmpeg -i "${1}" -f null - 2>/dev/stdout | grep -m 1 -- '^    creation_time   : ' )
 	case "${stamp:-""}" in
 		"")
+			echover "timestamp: ${1}: ${stmp_msn}"
 			return 1
 		;;
 	esac
@@ -488,8 +530,8 @@ fixstamp() {
 			return 1
 		;;
 	esac
-	if ! touch -t "${stamp}" -- "${1}" 2>/dev/null; then
-		return 1
+	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
+		echover "timestamp: ${1}: ${stmp_msf}"
 	fi
 	}
 	
@@ -546,7 +588,7 @@ fixstamp() {
 	esac
 	}
 	
-	local "code" "item"
+	local "code" "item" "stmp_msn" "stmp_mso" "stmp_msf"
 	if ! type date touch >/dev/null 2>&1; then
 		return 0
 	fi	
@@ -560,6 +602,8 @@ fixstamp() {
 			return 0
 		;;
 	esac
+	stmp_msn="Finding the date FAILED"
+	stmp_msf="Setting the date has FAILED"
 	for item in "${@}"; do
 		if ! [ -s "${item}" ]; then
 			continue
@@ -636,9 +680,10 @@ case "${sum}" in
 					if ! quadsum -cs -- "${sum}"; then
 						return 1
 					fi
-				fi
-				if ! echo "${hash}" | sha512sum -c; then
-					return 1
+				else
+					if ! echo "${hash}" | sha512sum -c; then
+						return 1
+					fi
 				fi
 			;;
 		esac
@@ -695,6 +740,34 @@ else
 	return 1
 fi
 }
+process_exe_warn_miss_judge() {
+case "${is_gog:-"1"}" in
+	0)
+		return 0
+	;;
+esac
+case "${ignore_missing:-"0"}" in
+	1)
+		return 0
+	;;
+esac
+case "${total:-""}" in
+	"")
+		return 1
+	;;
+	"-"*|0)
+		return 0
+	;;
+	1)
+		echoerr "${name}: ${1}: Is missing 1 BIN" 1>&2
+		return 1
+	;;
+	*)
+		echoerr "${name}: ${1}: Is missing ${total} BINs" 1>&2
+		return 1
+	;;
+esac
+}
 
 process_exe_warn_miss() {
 local "base" "exe" "base" "old" "now" "total"
@@ -711,7 +784,7 @@ esac
 base="${1##*"/"}"
 base="${base%"."*}"
 exe="${1}"
-exe="$( dirname -- "${exe}" )"
+exe=$( dirname -- "${exe}" )
 now=$( find "${exe}" -iname "${base}*.bin" 2>/dev/null | wc -l 2>/dev/null )
 old=$( tac -- "${1}" 2>/dev/null | cat -e 2>/dev/null | grep -m 1 -- "[0-9][0-9]#GOGCRCSTRING" 2>/dev/null )
 case "${old:-""}" in
@@ -723,27 +796,19 @@ unset "exe"
 old="${old%"#GOGCRCSTRING"*}"
 num="${#old}"
 num=$(( num - 2 ))
-old=$( necho "${old}" | sed -r "s/.{${num}}(..$)/\1/; s/^0//" )
+old=$( necho "${old}" | sed -r "s/.{${num:-"#"}}(..$)/\1/; s/^0//" )
 unset "num"
 total=$(( old - now ))
 unset "old" "now"
-case "${total:-"0"}" in
-	"-"*|0)
-		return 0
-	;;
-	1)
-		echoerr "${name}: ${1}: Is missing 1 BIN" 1>&2
-		return 1
-	;;
-	*)
-		echoerr "${name}: ${1}: Is missing ${total} BINs" 1>&2
-		return 1
-	;;
-esac
+if process_exe_warn_miss_judge "${1}"; then
+	return 0
+else
+	return 1
+fi
 }
 
 process_exe_exceptions() {
-local "exception"
+local "exception" "base" "exe" "old" "now"
 unset "sha_one"
 case "${no_excl:-"0"}" in
 	1)
@@ -756,7 +821,20 @@ case "${exception:-""}" in
 		return 1
 	;;
 	*)
+		echover "${name}: ${1}: Is an exception"
 		sha_one="${exception}"
+		case "${ignore_missing:-"0"}" in
+			0)
+				base="${1##*"/"}"
+				base="${base%"."*}"				
+				exe="${1}"
+				exe=$( dirname -- "${exe}" )
+				old=$( echo "${bin_exceptions}" | grep -c -- "  ${1%%".exe"}-" )
+				now=$( find "${exe}" -iname "${base}*.bin" 2>/dev/null | wc -l 2>/dev/null )
+				total=$(( old - now ))
+				total="${total:-"0"}"
+			;;
+		esac
 		return 0
 	;;
 esac
@@ -825,7 +903,7 @@ case "${is_gog:-"1"}" in
 				strict_full=$( echo "${strict_full}" | sha512sum )
 				strict_full="${strict_full:-"UNKNOWN"}"
 				strict_full="${strict_full%%"  "*}"
-				if ! echo "${cert_fingerprints}" | grep -m 1 -- "^${strict_full}$" >/dev/null 2>&1; then
+				if ! echo "${cert_fingerprints}" | grep -m 1 -- "^${strict_full}  " >/dev/null 2>&1; then
 					case "${old:-"none"}_${as:-"none"}_${to:-"none"}_${to:-"none"}" in
 						"${new:-"none"}"_ok_ok_ok)
 							echo "${strict_full}"
@@ -852,7 +930,7 @@ esac
 }
 
 process_exe() {
-local "sha_one"
+local "sha_one" "total"
 if ! process_local_checksums "${1}"; then return 1; fi
 if process_xattr "${1}"; then
 	if process_xattr_check "${1}"; then
@@ -902,6 +980,10 @@ else
 				return 0
 			;;
 		esac
+		if ! process_exe_warn_miss_judge "${1}"; then
+			echo "${1}: FAILED"
+			return 1
+		fi
 		if echo "${sha_one%%"  "*}  ${1}" | sha1sum -c; then
 			process_recovery_make "${1}"
 			process_xattr_make "${1}"
@@ -935,6 +1017,7 @@ case "${exception:-""}" in
 		return 1
 	;;
 	*)
+		echover "${name}: ${1}: Is an exception"
 		md_five="${exception}"
 		return 0
 	;;
@@ -1001,7 +1084,25 @@ case "${1}" in
 		solo=1
 	;;
 esac
-if ! [ -s "${exe}" ]; then
+if [ -s "${exe}" ]; then
+	case "${strict:-"0"}" in
+		1)
+			case "${exe}" in
+				"${process_bin_last_exe:-""}")
+					:
+				;;
+				*)
+					if ! process_exe "${exe}" >/dev/null; then
+						echo "${1}: FAILED"
+						code=1
+						return 1
+					fi
+					process_bin_last_exe="${exe}"
+				;;
+			esac
+		;;
+	esac
+else
 	echoerr "${name}: ${1}: No EXE found"
 	echo "${1}: FAILED"
 	code=1
@@ -1272,9 +1373,9 @@ if type b2sum >/dev/null 2>&1; then
 			case "${#hash}" in
 				128)
 					if setfattr -n "${hash_mark}" -v "${hash}" -- "${1}" 2>/dev/null; then
-						echo "xattrs: ${1}: BLAKE2b is created" 1>&2
+						echover "xattrs: ${1}: Creation OK" 1>&2
 					else
-						echo "xattrs: ${1}: Failed on creation" 1>&2
+						echover "xattrs: ${1}: Creation has FAILED" 1>&2
 						setfattr -x "${hash_mark}" -- "${1}" 2>/dev/null
 						code=1
 						return 1
@@ -1625,6 +1726,14 @@ fi
 case "${no_excl:-"0"}" in
 	0)
 		line=$( echo "${pdf_exceptions}" | grep -m 1 -- "  ${1##*"/"}$" 2>/dev/null )
+		case "${line:-""}" in
+			"")
+				:
+			;;
+			*)
+				echover "${name}: ${1}: Is an exception"
+			;;
+		esac
 	;;
 	1)
 		line=""
@@ -1649,6 +1758,7 @@ case "${line:-""}" in
 	fi
 	;;
 	*"  Manual.pdf")
+		echover "${name}: ${1}: Is an exception"
 		exe="setup_powerslave_1.0_(42515).exe"
 		dpath=$( realpath --no-symlinks -- "${1}" )
 		if ! find "${dpath%"/"*}" -maxdepth 2 -name "${exe}" | grep -m 1 -- '^'; then
@@ -1885,13 +1995,13 @@ case "${no_xattrs:-"0"}" in
 	1)
 		if getfattr --only-values -n "${hash_mark}" -- "${1}" >/dev/null 2>&1; then
 			if setfattr -x "${hash_mark}" -- "${1}" 2>/dev/null; then
-				echo "xattrs: ${1}: BLAKE2b data is deleted" 1>&2
+				echover "xattrs: ${1}: Deletion OK" 1>&2
 			else
-				echo "xattrs: ${1}: BLAKE2b deletion failed" 1>&2
+				echover "xattrs: ${1}: Deletion FAILED" 1>&2
 				code=1
 			fi
 		else
-			echo "xattrs: ${1}: No attributes are found" 1>&2
+			echover "xattrs: ${1}: Finding attributes has FAILED" 1>&2
 		fi
 	;;
 esac
@@ -2018,22 +2128,22 @@ exit "${code:-"0"}"
 
 data_exceptions() {
 time_exceptions="\
-201503031543.46  setup_colin2005.exe
-201501021821.51  setup_dark_fall_lights_out.exe
-201805160944.17  setup_defcon_1.6_(20793).exe
-202001212328.00  setup_forager_4.0.3_(35567).exe
-201501022141.24  setup_full_spectrum_warrior_2.1.0.7.exe
-202106090751.01  setup_jupiter_hell_0.9.10d_(64bit)_(47671).exe
-201501081626.48  setup_obscure.exe
-201503061550.33  setup_republic_the_revolution.exe
-201501090641.17  setup_revolt_2.1.0.5.exe
-202106091443.29  setup_scythe_digital_edition_1.7.12_(46982).exe
-202106051222.21  setup_not_for_broadcast_2021.06.04a_(64bit)_(47580).exe
-202010131024.04  setup_talisman_character_-_vampire_74912_(41937).exe
-201503061346.27  setup_toca_3.exe
-202106071633.22  setup_the_guild_3_ea_0.9.14_622947_(47632).exe
-202106040740.52  setup_witchaven_ii_blood_vengeance_1.0_(47551).exe
-201501090515.01  setup_wizardry7dos_2.0.0.11.exe
+2015-03-03T15:43:46+00:00  setup_colin2005.exe
+2015-01-02T18:21:51+00:00  setup_dark_fall_lights_out.exe
+2018-05-16T09:44:17+00:00  setup_defcon_1.6_(20793).exe
+2020-01-21T23:28:00+00:00  setup_forager_4.0.3_(35567).exe
+2015-01-02T21:41:24+00:00  setup_full_spectrum_warrior_2.1.0.7.exe
+2021-06-09T07:51:01+00:00  setup_jupiter_hell_0.9.10d_(64bit)_(47671).exe
+2015-01-08T16:26:48+00:00  setup_obscure.exe
+2015-03-06T15:50:33+00:00  setup_republic_the_revolution.exe
+2015-01-09T06:41:17+00:00  setup_revolt_2.1.0.5.exe
+2021-06-09T14:43:29+00:00  setup_scythe_digital_edition_1.7.12_(46982).exe
+2021-06-05T12:22:21+00:00  setup_not_for_broadcast_2021.06.04a_(64bit)_(47580).exe
+2020-10-13T10:24:04+00:00  setup_talisman_character_-_vampire_74912_(41937).exe
+2015-03-06T13:46:27+00:00  setup_toca_3.exe
+2021-06-07T16:33:22+00:00  setup_the_guild_3_ea_0.9.14_622947_(47632).exe
+2021-06-04T07:40:52+00:00  setup_witchaven_ii_blood_vengeance_1.0_(47551).exe
+2015-01-09T05:15:01+00:00  setup_wizardry7dos_2.0.0.11.exe
 
 "
 pdf_exceptions="\
@@ -2115,33 +2225,32 @@ c15aad8d2e8d958c8744107fbc6bc995  setup_mafia_iii_1.090.0_(19569)-7.bin
 
 setcert() {
 cert_fingerprints="\
-052531b9cf17c6728d43bb405a657d81a216cf36b4e708bd1fc87df8c901d48de88eb2f81fbaea5e624aaf3e494a438287a6e4ef9604deae0f95749709448cd1
-0753a4656853f22bb1b04b8c4946466be254978f9740574c0cd4c0317b68052fa2d3276bd63bd676a4358ac877ebe9975dc8298beb1a338fad1797d43afe52b8
-0c83f46c64e3371a493c88219d9c6e9094183a11da7ef8d978c07ab9d25a0f944a3ae09415f85ddd384cbc56000b3126eb2e52f6d9098fd8638e0b68933e2dda
-172881beb181466cf6ca9cdfddb5f0a69d2192fa3488c055f5a6a223f7c6cbe2479d90155a0fc162594d9d3965bdeef456b777e68b15dadd0c50435e8ddabd76
-1c205d9c767bf686714ad768e5eb5419c21c0e4e60f94b0b8fb0dea58629249d8b73dc0874176ed160bb1b5ca8d2fe4681ea4ed9a4a1064762db855c07a55377
-254cfd3b2e881618243b4030982e27eceff0b3a443f9d099d3b63fa34245d511c6d5e63276600e19a90604c7ca192b296dbd4f9eec198926028def14d0a32684
-29a8635ef232324cc4af6810db74e14d87a4bc75f0b67c15e3e0332e359b1eb5c6f60d5df891827a0752a4f02d7d9f0d347c4adcd8ea58b3c38fc350f1503f2e
-2eab8693cb9d94d343f8ac74dafc7966e29136e27079c8440648aa193cf43745e3d3530c0b583c57887caec1c41dfd9874b1ff215c5fb5bdba2c6263c7d215fa
-30e8bb9ab201f97b5b3e7c6158ad1aca2e589ff522bea275418474d42a78090d207abb5fa977609dcf106998758e7c05d5f327d553ffe57c4363f2d26b7505b7
-31761b0b6434c1af8ff0a834bbf64032b111ada2dbdb125ccc8674036aa6568148ec31417260a17d30dcf57bce3fae8a1d6ec3eb337446fd09e842fa824ae2fd
-3bab33b9276c01f7fc9f77a39840c90134bbccbe1dc8dd0ccae9ced564f48879a4f2e82d9da9eb754713a6751cfc6965164b92926c49c313a1197d257729c6bc
-44a050028b6f71eb10ea72df3ee2473416dc9724862d9feb288235b7bfed8ef3d6ee651eb0013f6b40a15008701bf8863c86b922d9afdcc68837857e52570af3
-47644361f16dcb02635921739a7fd9bd550c783571fb0fc70006f5f58fc103de0668617f3225fa7403895943b5a4615160d981675073273e7087b9a1db2e5207
-488436496d89de918a33d5efa1d56f06e20ffb3b7f094e0a97b0caaf10680cc1fa5957b3b28f7ce17888340ab03eccd4cc56a4f5393fe6bc6adc3b532b6dd353
-4954d9c3c3ff8d9ead4ed8feca4ea34f06fd2f3849581eaee597ca55249ddcb6e3908a739c64ca9bbc6a812fb78ba4105bb284b6707d1d4221aa474d0557c1cb
-51befa890fe518d28cdae8a6c016f0209d7f123a31d929251536bf9a2c8fc2cd8a1fc8ef55a1c1d7d981ab4aa78366844365d90dfb5b4d15865c5cdd6b2a083e
-5584a7d02923192e720d54ffc9f69deb32850b42b7c04a0d115edd9f2acbc30fb76524c2487ee1f130bc90b9572428bfa5772bb5290cc729f77534fe98a73cf4
-5da6f9ad4d8d15e023e7f41981ac62446d9f59944ee5b17a809670e7cd42ad8f25884075e986269bed72a88aeae65c11ff648b8856dced42d1ce8889a342cf85
-76b890df3075ae4d1df271ca5556fe0e93592410ed4caa4dcf23938e787a3b690080842921ee8f19029e1a514f20cd67997bcadaa61e7f629ab8024a508d1f45
-78bd304669f32ef48443af403678fd91c7aaa3076c369f40dfdb57eee337cd9e9fb5c076bd17761180f1eab1f7ace2fc3f2d6bf3044ea42ead7311f37c6205f4
-98bd1464bcce48b82306968478b085d9699ba05bd0cde3c8090e9ba304bd91ba57448df87cedd9518d147c762734f439c22d274e9f73f8d2ee0e980375433482
-b4b6d8a358524ee601ed5ee95cc21f6e77ea432e9005fbb67def6e0722100d5b122578e495adbe47583dc9cea21273646eb30cf328bf85244f543f068cebc104
-c3400f5e4816a7b9d7efe51c601400f4bdb357d7ae1097f50e224096821eb6db72feabb360dc5984302836958b88234e5fc8506a581ef29271ab249c4747e6d4
-cc8dee5b2853375b49367dd9ed98ba186654d925873bbff3901f298df22f0fcd27e656570315b5bde583dc34248ecb4b299550a8cc533de67f90a104a7ad5b5e
-ce46602dd8ec8959c1700074efad20e35303b5e8f292c755190c9f331675a9656fba7a37254f6a113d4291ad03060fa3a623beb4e31ef52ecc145e6eb87b61b5
-e0934604d6bfdfa30a2fa66922f129a74f788a11b2cfb0bbe16294afd77c58d4cf5ce2656ec328cfd71bfc1fa5005d01d9271d3c86ad7de33e67c24e19496764
-e5adc4c7aa7dca035a0d9d641ea77a79cb37c7ab1cb4e39e681cba869ea8e1adb2744084cf48107fdafd4394d6e8ec2d25e10d8da908fdfb0a1479031c6fa6bc
+4954d9c3c3ff8d9ead4ed8feca4ea34f06fd2f3849581eaee597ca55249ddcb6e3908a739c64ca9bbc6a812fb78ba4105bb284b6707d1d4221aa474d0557c1cb  setup_multiwinia_2.0.0.11.exe
+98bd1464bcce48b82306968478b085d9699ba05bd0cde3c8090e9ba304bd91ba57448df87cedd9518d147c762734f439c22d274e9f73f8d2ee0e980375433482  setup_worms_forts_under_siege_2.0.0.9.exe
+0c83f46c64e3371a493c88219d9c6e9094183a11da7ef8d978c07ab9d25a0f944a3ae09415f85ddd384cbc56000b3126eb2e52f6d9098fd8638e0b68933e2dda  setup_dnd_dragonshard_2.0.0.10.exe
+e0934604d6bfdfa30a2fa66922f129a74f788a11b2cfb0bbe16294afd77c58d4cf5ce2656ec328cfd71bfc1fa5005d01d9271d3c86ad7de33e67c24e19496764  setup_shadow_warrior_complete_2.0.0.7.exe
+47644361f16dcb02635921739a7fd9bd550c783571fb0fc70006f5f58fc103de0668617f3225fa7403895943b5a4615160d981675073273e7087b9a1db2e5207  setup_overlord_pack_2.0.1.10.exe
+29a8635ef232324cc4af6810db74e14d87a4bc75f0b67c15e3e0332e359b1eb5c6f60d5df891827a0752a4f02d7d9f0d347c4adcd8ea58b3c38fc350f1503f2e  setup_space_empires_4_deluxe_2.0.0.7.exe
+488436496d89de918a33d5efa1d56f06e20ffb3b7f094e0a97b0caaf10680cc1fa5957b3b28f7ce17888340ab03eccd4cc56a4f5393fe6bc6adc3b532b6dd353  setup_superfrog_2.0.0.7.exe
+76b890df3075ae4d1df271ca5556fe0e93592410ed4caa4dcf23938e787a3b690080842921ee8f19029e1a514f20cd67997bcadaa61e7f629ab8024a508d1f45  setup_influx_2.0.0.5.exe
+5584a7d02923192e720d54ffc9f69deb32850b42b7c04a0d115edd9f2acbc30fb76524c2487ee1f130bc90b9572428bfa5772bb5290cc729f77534fe98a73cf4  setup_alan_wake_american_nightmare_2.1.0.24.exe
+3bab33b9276c01f7fc9f77a39840c90134bbccbe1dc8dd0ccae9ced564f48879a4f2e82d9da9eb754713a6751cfc6965164b92926c49c313a1197d257729c6bc  setup_demon_stone_2.0.1.10.exe
+31761b0b6434c1af8ff0a834bbf64032b111ada2dbdb125ccc8674036aa6568148ec31417260a17d30dcf57bce3fae8a1d6ec3eb337446fd09e842fa824ae2fd  setup_badmojo_2.0.0.3.exe
+44a050028b6f71eb10ea72df3ee2473416dc9724862d9feb288235b7bfed8ef3d6ee651eb0013f6b40a15008701bf8863c86b922d9afdcc68837857e52570af3  setup_entomorph_2.1.0.8.exe
+e5adc4c7aa7dca035a0d9d641ea77a79cb37c7ab1cb4e39e681cba869ea8e1adb2744084cf48107fdafd4394d6e8ec2d25e10d8da908fdfb0a1479031c6fa6bc  setup_rocket_ranger_2.0.0.1.exe 
+0753a4656853f22bb1b04b8c4946466be254978f9740574c0cd4c0317b68052fa2d3276bd63bd676a4358ac877ebe9975dc8298beb1a338fad1797d43afe52b8  setup_full_spectrum_warrior_2.1.0.7.exe
+254cfd3b2e881618243b4030982e27eceff0b3a443f9d099d3b63fa34245d511c6d5e63276600e19a90604c7ca192b296dbd4f9eec198926028def14d0a32684  setup_revolt_2.1.0.5.exe
+052531b9cf17c6728d43bb405a657d81a216cf36b4e708bd1fc87df8c901d48de88eb2f81fbaea5e624aaf3e494a438287a6e4ef9604deae0f95749709448cd1  setup_sw_rogue_squadron3d_2.0.0.3.exe
+78bd304669f32ef48443af403678fd91c7aaa3076c369f40dfdb57eee337cd9e9fb5c076bd17761180f1eab1f7ace2fc3f2d6bf3044ea42ead7311f37c6205f4  setup_red_baron3d_2.1.0.24.exe
+c3400f5e4816a7b9d7efe51c601400f4bdb357d7ae1097f50e224096821eb6db72feabb360dc5984302836958b88234e5fc8506a581ef29271ab249c4747e6d4  setup_caesar4_2.0.0.5.exe
+172881beb181466cf6ca9cdfddb5f0a69d2192fa3488c055f5a6a223f7c6cbe2479d90155a0fc162594d9d3965bdeef456b777e68b15dadd0c50435e8ddabd76  setup_blazing_star_gog-3_(12081).exe
+5da6f9ad4d8d15e023e7f41981ac62446d9f59944ee5b17a809670e7cd42ad8f25884075e986269bed72a88aeae65c11ff648b8856dced42d1ce8889a342cf85  setup_bloodrayne_betrayal_gog-2_(16593).exe
+cc8dee5b2853375b49367dd9ed98ba186654d925873bbff3901f298df22f0fcd27e656570315b5bde583dc34248ecb4b299550a8cc533de67f90a104a7ad5b5e  setup_defcon_1.6_(20793).exe
+b4b6d8a358524ee601ed5ee95cc21f6e77ea432e9005fbb67def6e0722100d5b122578e495adbe47583dc9cea21273646eb30cf328bf85244f543f068cebc104  setup_lords_of_the_fallen_game_of_the_year_edition_1.0.0_(64bit)_(24706).exe
+2eab8693cb9d94d343f8ac74dafc7966e29136e27079c8440648aa193cf43745e3d3530c0b583c57887caec1c41dfd9874b1ff215c5fb5bdba2c6263c7d215fa  setup_six_ages_ride_like_the_wind_1.0.12-1_(35222).exe
+30e8bb9ab201f97b5b3e7c6158ad1aca2e589ff522bea275418474d42a78090d207abb5fa977609dcf106998758e7c05d5f327d553ffe57c4363f2d26b7505b7  setup_papers_please_1.2.72_(43909).exe
+ce46602dd8ec8959c1700074efad20e35303b5e8f292c755190c9f331675a9656fba7a37254f6a113d4291ad03060fa3a623beb4e31ef52ecc145e6eb87b61b5  setup_starlord_1.0_(6087).exe
+51befa890fe518d28cdae8a6c016f0209d7f123a31d929251536bf9a2c8fc2cd8a1fc8ef55a1c1d7d981ab4aa78366844365d90dfb5b4d15865c5cdd6b2a083e  setup_witchaven_ii_blood_vengeance_1.0_(47551).exe
 
 "
 }
