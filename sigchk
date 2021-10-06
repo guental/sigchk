@@ -216,7 +216,7 @@ while getopts "vVtTpPdDsSxXhHqQ-:" OPT; do
 					show_help
 				;;
 				version)
-					printf -- '%s\n' "${name} ${version:-"1.1.5"}"
+					printf -- '%s\n' "${name} ${version:-"1.1.6"}"
 					exit 0
 				;;
 				q|Q|quiet)
@@ -326,17 +326,23 @@ fixstamp() {
 	
 	pdf_stamp() {
 	local "stamp"
-	stamp=$( tac "${1}" | cat -e | grep -Em 1 -- '<xmp:ModifyDate>|<xmp:MetadataDate>|<xmp:CreationDate>' )
+	stamp=$( tac "${1}" | cat -e | grep -Em 1 -- '<xmp:ModifyDate>|<xmp:MetadataDate>|<xmp:CreationDate>|xap:ModifyDate=' )
 	stamp="${stamp%%'</xmp:ModifyDate>'*}"
 	stamp="${stamp##*'<xmp:ModifyDate>'}"
 	stamp="${stamp%%'</xmp:MetadataDate>'*}"
 	stamp="${stamp##*'<xmp:MetadataDate>'}"
 	stamp="${stamp%%'</xmp:CreationDate>'*}"
 	stamp="${stamp##*'<xmp:CreationDate>'}"
+	stamp="${stamp##*"xap:ModifyDate='"}"
+	stamp="${stamp%%"' xap:"*}"
+	stamp="${stamp%%"'>"*}"
 	case "${stamp:-""}" in
 		"")
 			echover "timestamp: ${1}: ${stmp_msn}"
 			stamp=""
+		;;
+		*"Z")
+			stamp=$( date -d "${stamp%%"Z"}+00:00" -- '+%Y%m%d%H%M.%S' )
 		;;
 		*)
 			stamp=$( date -d "${stamp}" -- '+%Y%m%d%H%M.%S' )
@@ -1025,7 +1031,7 @@ esac
 }
 
 process_bin_extract() {
-local "n_orig"
+local "n_orig" "line"
 case "${n}" in
 	01|02|03|04|05|06|07|08|09|00)
 		n=$( necho "${n}" | sed -r "s/^0//" )
@@ -1048,10 +1054,14 @@ while true; do
 	fi
 	case "${solo:-"0"}" in
 		0)
-			echo "$( necho "${t}" | sed -r "s/^(.{32}).*/\1/" )  ${exe%".exe"}-${n}.bin"
+			line=$( necho "${t}" | sed -r "s/^(.{32}).*/\1/" )
+			echo "${line}  ${exe%".exe"}-${n}.bin"
+			unset "line"
 		;;
 		1)
-			echo "$( necho "${t}" | sed -r "s/^(.{32}).*/\1/" )  ${exe%".exe"}.bin"
+			line=$( necho "${t}" | sed -r "s/^(.{32}).*/\1/" )
+			echo "${line}  ${exe%".exe"}.bin"
+			unset "line"
 			break
 		;;
 	esac
@@ -1730,6 +1740,17 @@ case "${no_excl:-"0"}" in
 			"")
 				:
 			;;
+			*"  Manual.pdf")
+				filesize=$( stat --printf="%s" -- "${1}" 2>/dev/null )
+				case "${filesize:-"0"}" in
+					1177352)
+						echover "${name}: ${1}: Is an exception"
+					;;
+					*)
+						line=""
+					;;
+				esac
+			;;
 			*)
 				echover "${name}: ${1}: Is an exception"
 			;;
@@ -1756,14 +1777,6 @@ case "${line:-""}" in
 		process_xattr_make "${1}"
 		fixstamp "${1}"
 	fi
-	;;
-	*"  Manual.pdf")
-		echover "${name}: ${1}: Is an exception"
-		exe="setup_powerslave_1.0_(42515).exe"
-		dpath=$( realpath --no-symlinks -- "${1}" )
-		if ! find "${dpath%"/"*}" -maxdepth 2 -name "${exe}" | grep -m 1 -- '^'; then
-			return 0
-		fi >/dev/null 2>&1
 	;;
 	*)
 		if echo "${line}" | sha1sum -c; then
@@ -2146,6 +2159,7 @@ time_exceptions="\
 2015-01-09T05:15:01+00:00  setup_wizardry7dos_2.0.0.11.exe
 
 "
+
 pdf_exceptions="\
 331e0d62e010ce5b9a56d303f5d6c572a3a651df  blade_runner_conceptual_art.pdf
 43ba722c0307f8c045170323a1690bdebbf976ac  blade_runner_manual_english.pdf
@@ -2155,9 +2169,10 @@ efcfcb8392ad7f0f435e3117273d6ae704b772de  blade_runner_manual_german.pdf
 2e66fe73015955d9e9b1a688fc23bc89beca89e7  Desperados_Artbook_Digital.pdf
 aa356cf6a307d45e4c7a1b5c0546da73911da4f2  emperor_of_the_fading_suns_manual.pdf
 7a412d43f5c8eacbf4cc4086db8e3e2c14cab275  eternam_manual.pdf
-b630870d16e5d37b48b347b031b897c64d433f1f  Manual.pdf
+8371e89439451103c2fe2f6bd06d24996d6a883b  Manual.pdf
 486ac0741ef18b9a150c6f4f58556b7917604d8f  ShadowrunReturnsAnthology.pdf
 c72b1e7231adc324e6e8c2de2ceb79d9ef55f3e7  warhammer_40000_da_orks_manual.pdf
+
 "
 
 exe_exceptions="\
@@ -2168,6 +2183,7 @@ eaf746d055bddfadee0bdf56d4fb1f19cef4d04b  setup_obscure.exe
 dc38029e24046fc9476a20796ed207a3a887fe2d  setup_toca_3.exe
 
 "
+
 bin_exceptions="\
 ff235c2bcd887fc3d59af92aa780b0ed  setup_15_days_1.0_(19285)-1.bin
 896d1e41bca56cb9bc9587f151f75729  setup_bloodrayne_2_1.0_(19403)-1.bin
