@@ -1425,7 +1425,7 @@ if type mkpar quadsum >/dev/null 2>&1; then
 		if mkpar -xs -- "${full}" 2>/dev/null; then
 			hash_par_old="$( getfattr -n "user.par2.blake2b" --only-values -- "${par}.par2" 2>/dev/null )"
 			hash_par_old="${hash_par_old}$( getfattr -n "user.par2.blake2b" --only-values -- "${par}.vol0+1.par2" 2>/dev/null )"
-			setfattr -x "user.par2.blake2b" -- "${par}.par2" "${par}.vol0+1.par2" &>/dev/null
+			setfattr -x "user.par2.blake2b" -- "${par}.par2" "${par}.vol0+1.par2" 2>/dev/null
 		else
 			if process_recovery_make_failed "mkpar: ${item}: Par2 creation FAILED"; then return 1; fi
 		fi
