@@ -277,21 +277,16 @@ while getopts "vVtTpPdDsSxXhHqQ-:" OPT; do
 				dev|indev|dev-mode|in-dev)
 					case "${dev_mode:-"0"}" in
 						0)
-							if type sed >/dev/null 2>&1; then
-								if [ -w "${0}" ]; then
-									if sed -i 's/^dev_mode=0$/dev_mode=1/' -- "${0}"; then
-										dev_mode=1
-										printf -- '%s\n' "${name}: The dev mode is on" 1>&2
-									else
-										printf -- '%s\n' "${name}: Cannot rewrite ${0##*"/"}" 1>&2
-										exit 1
-									fi
+							if [ -w "${0}" ]; then
+								if sed -i 's/^dev_mode=0$/dev_mode=1/' -- "${0}"; then
+									dev_mode=1
+									printf -- '%s\n' "${name}: The dev mode is on" 1>&2
 								else
-									printf -- '%s\n' "${name}: please run as root" 1>&2
+									printf -- '%s\n' "${name}: Cannot rewrite ${0##*"/"}" 1>&2
 									exit 1
 								fi
 							else
-								printf -- '%s\n' "${name}: please install: sed"
+								printf -- '%s\n' "${name}: please run as root" 1>&2
 								exit 1
 							fi
 						;;
@@ -2654,7 +2649,6 @@ b56fb2bef65099f6d6f24fa644f28c09b5c9b98f3b291781dd406f61352bb35ca4307c8d42215309
 f0265fd09e422aeeaa896f3f2044cdb60ae85be9a903f960984e21bc63e88795d560935d52643839a41a1ca4feffa973b2413b5bcea67a3f90f500b14a8b110a  VMware, Inc./VMware-workstation-full-15.5.1-15018445.exe
 21623a16b6661afd494b87833ba99b8bc58a2231560adb152f7bfdef3b62dfbe3799297f5c336e1c01b0ce5a8ec5de00a07cfac71b8c282da12e64b9253bc0a7  Intel(R) Software and Firmware Products/Intel(R)_USB_3.0_eXtensible_Host_Controller_Driver_5.0.4.43_v2/Setup.exe
 620c5e3e9aaf066d318aa4113322cbbd7bd1098d69c9000fcf887abbc233e0094353a8800d29bfd88967d8521ebac5932f39ad8471c0a0021ad94b5b942fd30c  Realtek Semiconductor Corp./Win7_Win8_Win81_Win10_R282/Setup.exe
-
 afed8a6de936a19bdeb387db0af803f74ec4a2a38c30669c65b61499ef33f4a1edee3aad85ec1147bac04bb479209d0513ea1625f88c2d34dc3b182f04b46a53  Macrovision Corporation/WDM_A406/setup.exe
 e9328579bce1733b4221430fb69d6821059d0b210c36d387cdd0b7f5a6e358fecc8cdfe8dd2e076dabab8a9f2df82f45f2e7e0ba2385be3fe6e513be5b871c5f  Waterfox Limited/Waterfox Classic 2019.12 Setup.exe
 a3d1192792d0e78dd7ea4aaeb372d7fa14c268402af2515c2c7fa8fa3ec9b45d1ef2e866448153f8d7dd66ecf49f94ea328a3f35ab83583a18b66dfe83577162  WebTorrent LLC/WebTorrentSetup-v0.21.0.exe
