@@ -174,7 +174,7 @@ setopt() {
 local "OPT" "OPTARG" "OPTERR" "OPTIND"
 OPTIND=1
 OPTERR=0
-while getopts "vVtTpPdDsSxXhHqQ-:" OPT; do
+while getopts "fFvVtTpPdDsSxXhHqQ-:" OPT; do
 	case "${OPT}" in
 		f|F)
 			fingerprint=1
