@@ -1,7 +1,7 @@
 #!/bin/sh
 {
-# 2dd0a11069e84e1728e392c45b7ae17a
-# 8f7929bafabaf863ebda70f0d0d27de77b6a825ce4fd718739d8783e770013a6ec83294933399ed7b42d3479736497a8a8832d033893501db257faae7426d241
+# 587a8f44adaf338e03c1b84a8b64379d
+# 2a22b551d29328106a1e7b8075ac46d58dc04f4b6490b0a8b8d72c1fe1d1d1b817fd8aabfac5c49c97bf26821b2296c9c96fe40c13512d6aefc4c680fc4479ef
 set -u
 
 necho() {
@@ -315,7 +315,7 @@ while getopts "fFvVtTpPdDsSxXhHqQ-:" OPT; do
 						1)
 							if [ -w "${0}" ]; then
 								if sed -i 's/^dev_mode=1$/dev_mode=0/' -- "${0}"; then
-									dev_mode=1
+									dev_mode=0
 									printf -- '%s\n' "${name}: The dev mode is off" 1>&2
 								else
 									printf -- '%s\n' "${name}: Cannot rewrite ${0##*"/"}" 1>&2
@@ -395,7 +395,7 @@ case "${self_hash##"# "}" in
 		:
 	;;
 	*)
-		printf -- '%s\n' "${0##*"/"}: Self-integrity check: FAILED" 1>&2
+		printf -- '%s\n' "${0##*"/"}: self-integrity verification: FAILED" 1>&2
 		exit 1
 	;;
 esac
