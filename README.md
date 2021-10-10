@@ -8,7 +8,7 @@ sigchk [OPTION]... [FILE]...
 
 **Options** 
 
-***--fingerprint*** show unknown installer fingerprints
+***f, ---fingerprint*** show unknown installer fingerprints
 
 ***-t, --timestamp*** try to recover modification dates
 
