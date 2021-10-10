@@ -25,7 +25,7 @@ sigchk [OPTION]... [FILE]...
 ***-q, --quiet*** quiet mode
 
 # Requirements
-`sh awk binutils bzip2 coreutils find grep gzip osslsigncode sed tar unzip xz`
+`sh awk bzip2 coreutils find grep gzip osslsigncode sed tar unzip xz`
 
 **Optional Packages**
 
