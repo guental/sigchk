@@ -25,11 +25,11 @@ sigchk [OPTION]... [FILE]...
 ***-q, --quiet*** quiet mode
 
 # Requirements
-`sh awk bzip2 coreutils find grep gzip osslsigncode sed tar unzip xz`
+`sh awk bzip2 coreutils find grep gzip osslsigncode sed tar unzip`
 
 **Optional Packages**
 
-`7zip-full ar attr b2sum brotli ffmpeg ghostscript imagemagick jpeginfo moreutils parallel pngcheck unrar zip zstd`
+`7zip-full ar attr b2sum brotli ffmpeg ghostscript imagemagick jpeginfo moreutils parallel pngcheck unrar xz zip zstd`
 
 **Supported OS**
 
