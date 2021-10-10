@@ -1,5 +1,7 @@
 #!/bin/sh
 {
+# 2dd0a11069e84e1728e392c45b7ae17a
+# 8f7929bafabaf863ebda70f0d0d27de77b6a825ce4fd718739d8783e770013a6ec83294933399ed7b42d3479736497a8a8832d033893501db257faae7426d241
 set -u
 
 necho() {
@@ -170,6 +172,22 @@ printf -- '%s\n' "${text}"
 exit "${1:-"0"}"
 }
 
+setdevmode() {
+local "dev_hash" "timezone"
+dev_mode=0
+if type sha1sum mkpar quadsum >/dev/null 2>&1; then
+	if [ -e "/etc/timezone" ]; then
+		timezone=$( cat -- "/etc/timezone" )
+	fi
+	dev_hash=$( necho "${timezone:-""}${LANG:-""}${USER:-""}" | sha1sum )
+	case "${dev_hash%%"  -"}" in
+		"b857b8b1edaf401a6808382f84a074820d58c802")
+			dev_mode=1
+		;;
+	esac
+fi
+}
+
 setopt() {
 local "OPT" "OPTARG" "OPTERR" "OPTIND"
 OPTIND=1
@@ -271,7 +289,7 @@ while getopts "fFvVtTpPdDsSxXhHqQ-:" OPT; do
 					show_help
 				;;
 				version)
-					printf -- '%s\n' "${name} ${version:-"1.1.7"}"
+					printf -- '%s\n' "${name} ${version:-"1.1.8"}"
 					exit 0
 				;;
 				dev|indev|dev-mode|in-dev)
@@ -281,6 +299,24 @@ while getopts "fFvVtTpPdDsSxXhHqQ-:" OPT; do
 								if sed -i 's/^dev_mode=0$/dev_mode=1/' -- "${0}"; then
 									dev_mode=1
 									printf -- '%s\n' "${name}: The dev mode is on" 1>&2
+								else
+									printf -- '%s\n' "${name}: Cannot rewrite ${0##*"/"}" 1>&2
+									exit 1
+								fi
+							else
+								printf -- '%s\n' "${name}: please run as root" 1>&2
+								exit 1
+							fi
+						;;
+					esac
+				;;
+				no-dev|no-dev-mode|not-in-dev)
+					case "${dev_mode:-"1"}" in
+						1)
+							if [ -w "${0}" ]; then
+								if sed -i 's/^dev_mode=1$/dev_mode=0/' -- "${0}"; then
+									dev_mode=1
+									printf -- '%s\n' "${name}: The dev mode is off" 1>&2
 								else
 									printf -- '%s\n' "${name}: Cannot rewrite ${0##*"/"}" 1>&2
 									exit 1
@@ -339,6 +375,32 @@ case "${#}" in
 esac
 }
 
+selfcheck() {
+local "self" "self_no_hash" "self_hash" "self_check"
+self=$( base64 --wrap=0 -- "${0}" 2>/dev/null )
+self="${self:-"Cg=="}"
+self_no_hash=$( printf -- '%s\n' "${self}" | base64 -d 2>/dev/null | grep -Ev -- "^# [a-f0-9]{32}$|^# [a-f0-9]{128}$" 2>/dev/null | base64 --wrap=0 2>/dev/null )
+self_no_hash="${self_no_hash:-"Cg=="}"
+if type b2sum >/dev/null 2>&1; then
+	self_hash=$( printf -- '%s\n' "${self}" | base64 -d 2>/dev/null | grep -Em 1 -- "^# [a-f0-9]{128}$" 2>/dev/null )
+	self_check=$( printf -- '%s\n' "${self_no_hash}" | base64 -d 2>/dev/null | b2sum 2>/dev/null )
+else
+	self_hash=$( printf -- '%s\n' "${self}" | base64 -d 2>/dev/null | grep -Em 1 -- "^# [a-f0-9]{32}$" 2>/dev/null )
+	self_check=$( printf -- '%s\n' "${self_no_hash}" | base64 -d 2>/dev/null | md5sum 2>/dev/null )
+fi
+self_hash="${self_hash:-"unknown"}"
+self_check="${self_check:-"none"}"
+case "${self_hash##"# "}" in
+	"${self_check%%"  -"}")
+		:
+	;;
+	*)
+		printf -- '%s\n' "${0##*"/"}: Self-integrity check: FAILED" 1>&2
+		exit 1
+	;;
+esac
+}
+
 devchk() {
 case "${dev_mode:-"0"}" in
 	0)
@@ -380,7 +442,7 @@ fixstamp() {
 				break
 			;;
 			*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]"Z0"*)
-				echo "${line%%"Z^X^"*}Z0"
+				echo "${line}"
 				break
 			;;
 		esac
@@ -396,7 +458,7 @@ fixstamp() {
 	exe_stamp() {
 	local "stamp" "funccode"
 	case "${time_exceptions}" in
-		*"${1##*"/"}"*)
+		*"  ${1##*"/"}"*)
 			stamp=$( echo "${time_exceptions}" | grep -m 1 -- "  ${1##*"/"}$" )
 			stamp="${stamp%%" "*}"
 		;;
@@ -908,7 +970,7 @@ base="${1##*"/"}"
 base="${base%"."*}"
 exe="${1}"
 exe=$( dirname -- "${exe}" )
-now=$( find "${exe}" -iname "${base}*.bin" 2>/dev/null | wc -l 2>/dev/null )
+now=$( find "${exe}" -maxdepth 1 -iname "${base}*.bin" 2>/dev/null | wc -l 2>/dev/null )
 old=$( tac -- "${1}" 2>/dev/null | cat -e 2>/dev/null | grep -m 1 -- "[0-9][0-9]#GOGCRCSTRING" 2>/dev/null )
 case "${old:-""}" in
 	"")
@@ -952,7 +1014,7 @@ case "${exception:-""}" in
 				exe="${1}"
 				exe=$( dirname -- "${exe}" )
 				old=$( echo "${bin_exceptions}" | grep -c -- "  ${1%%".exe"}-" )
-				now=$( find "${exe}" -iname "${base}*.bin" 2>/dev/null | wc -l 2>/dev/null )
+				now=$( find "${exe}" -maxdepth 1 -iname "${base}*.bin" 2>/dev/null | wc -l 2>/dev/null )
 				total=$(( old - now ))
 				total="${total:-"0"}"
 			;;
@@ -1257,7 +1319,7 @@ if process_bin_exceptions "${1}"; then
 			return 0
 		;;
 	esac
-	num_bin=$( find "$( dirname -- "${exe}" )" -iname "${find_bins}*.bin" 2>/dev/null | wc -l 2>/dev/null )
+	num_bin=$( find "$( dirname -- "${exe}" )" -maxdepth 1 -iname "${find_bins}*.bin" 2>/dev/null | wc -l 2>/dev/null )
 	n=$( echo "${bin_exceptions}" | grep -c -- "  ${exe%".exe"}" )
 	mn=$(( n - num_bin ))
 	case "${mn}" in
@@ -1284,7 +1346,7 @@ case "${old_exe:-""}" in
 		md_five=$( echo "${md_five}" | awk '{print tolower($0)}' )
 		t="${#md_five}"
 		t=$(( t - 2 ))
-		num_bin=$( find "$( dirname -- "${exe}" )" -iname "${find_bins}*.bin" 2>/dev/null | wc -l 2>/dev/null )
+		num_bin=$( find "$( dirname -- "${exe}" )" -maxdepth 1 -iname "${find_bins}*.bin" 2>/dev/null | wc -l 2>/dev/null )
 		case "${num_bin:-""}" in
 			"")
 				num_bin="00"
@@ -1425,7 +1487,7 @@ if type mkpar quadsum >/dev/null 2>&1; then
 		if mkpar -xs -- "${full}" 2>/dev/null; then
 			hash_par_old="$( getfattr -n "user.par2.blake2b" --only-values -- "${par}.par2" 2>/dev/null )"
 			hash_par_old="${hash_par_old}$( getfattr -n "user.par2.blake2b" --only-values -- "${par}.vol0+1.par2" 2>/dev/null )"
-			setfattr -x "user.par2.blake2b" -- "${par}.par2" "${par}.vol0+1.par2" 2>/dev/null
+			setfattr -x "user.par2.blake2b" -- "${par}.par2" "${par}.vol0+1.par2" &>/dev/null
 		else
 			if process_recovery_make_failed "mkpar: ${item}: Par2 creation FAILED"; then return 1; fi
 		fi
@@ -1535,7 +1597,11 @@ if type b2sum >/dev/null 2>&1; then
 			return 1
 		;;
 		"${hash}")
-			echo "${1}: OK"
+			case "${fingerprint:-"0"}" in
+				0)
+					echo "${1}: OK"
+				;;
+			esac
 			return 0
 		;;
 		*)
@@ -1598,7 +1664,11 @@ if type 7z >/dev/null 2>&1; then
 		process_recovery_make "${1}"
 		process_xattr_make "${1}"
 		fixstamp "${1}"
-		echo "${1}: OK"
+		case "${fingerprint:-"0"}" in
+			0)
+				echo "${1}: OK"
+			;;
+		esac
 	else
 		echo "${1}: FAILED"
 		code=1
@@ -1630,7 +1700,11 @@ if type brotli >/dev/null 2>&1; then
 		process_recovery_make "${1}"
 		process_xattr_make "${1}"
 		fixstamp "${1}"
-		echo "${1}: OK"
+		case "${fingerprint:-"0"}" in
+			0)
+				echo "${1}: OK"
+			;;
+		esac
 	else
 		echo "${1}: FAILED"
 		code=1
@@ -1661,7 +1735,11 @@ if bzip2 -tf /dev/stdin < "${1}" >/dev/null 2>&1; then
 	process_recovery_make "${1}"
 	process_xattr_make "${1}"
 	fixstamp "${1}"
-	echo "${1}: OK"
+	case "${fingerprint:-"0"}" in
+		0)
+			echo "${1}: OK"
+		;;
+	esac
 else
 	echo "${1}: FAILED"
 	code=1
@@ -1737,7 +1815,11 @@ if ( cd -- "${dtmp}" 2>/dev/null && mv -- control.tar.xz data.tar.xz 2>/dev/null
 	process_recovery_make "${1}"
 	process_xattr_make "${1}"
 	fixstamp "${1}"
-	echo "${1}: OK"
+	case "${fingerprint:-"0"}" in
+		0)
+			echo "${1}: OK"
+		;;
+	esac
 else
 	process_tmp_clean
 	echo "${1}: FAILED"
@@ -1764,7 +1846,11 @@ if gzip -tf /dev/stdin < "${1}" >/dev/null 2>&1; then
 	process_recovery_make "${1}"
 	process_xattr_make "${1}"
 	fixstamp "${1}"
-	echo "${1}: OK"
+	case "${fingerprint:-"0"}" in
+		0)
+			echo "${1}: OK"
+		;;
+	esac
 else
 	echo "${1}: FAILED"
 	code=1
@@ -1790,7 +1876,11 @@ if xz -dcf /dev/stdin < "${1}" >/dev/null 2>&1; then
 	process_recovery_make "${1}"
 	process_xattr_make "${1}"
 	fixstamp "${1}"
-	echo "${1}: OK"
+	case "${fingerprint:-"0"}" in
+		0)
+			echo "${1}: OK"
+		;;
+	esac
 else
 	echo "${1}: FAILED"
 	code=1
@@ -1821,7 +1911,11 @@ if type ffmpeg >/dev/null 2>&1; then
 			process_recovery_make "${1}"
 			process_xattr_make "${1}"
 			fixstamp "${1}"
-			echo "${1}: OK"
+			case "${fingerprint:-"0"}" in
+				0)
+					echo "${1}: OK"
+				;;
+			esac
 		;;
 		*)
 			echo "${1}: FAILED"
@@ -1881,7 +1975,11 @@ case "${line:-""}" in
 			process_recovery_make "${1}"
 			process_xattr_make "${1}"
 			fixstamp "${1}"
-			echo "${1}: OK"
+			case "${fingerprint:-"0"}" in
+				0)
+					echo "${1}: OK"
+				;;
+			esac
 		else
 			echo "${1}: FAILED"
 			code=1
@@ -1924,7 +2022,11 @@ if type pngcheck >/dev/null 2>&1; then
 		process_recovery_make "${1}"
 		process_xattr_make "${1}"
 		fixstamp "${1}"
-		echo "${1}: OK"
+		case "${fingerprint:-"0"}" in
+				0)
+					echo "${1}: OK"
+				;;
+			esac
 	else
 		echo "${1}: FAILED"
 		code=1
@@ -1956,7 +2058,11 @@ if type jpeginfo >/dev/null 2>&1; then
 		process_recovery_make "${1}"
 		process_xattr_make "${1}"
 		fixstamp "${1}"
-		echo "${1}: OK"
+		case "${fingerprint:-"0"}" in
+			0)
+				echo "${1}: OK"
+			;;
+		esac
 	else
 		echo "${1}: FAILED"
 		code=1
@@ -2001,7 +2107,11 @@ if type unrar >/dev/null 2>&1; then
 		process_recovery_make "${1}"
 		process_xattr_make "${1}"
 		fixstamp "${1}"
-		echo "${1}: OK"
+		case "${fingerprint:-"0"}" in
+			0)
+				echo "${1}: OK"
+			;;
+		esac
 	else
 		echo "${1}: FAILED"
 		code=1
@@ -2072,7 +2182,11 @@ case "${?}" in
 		process_recovery_make "${1}"
 		process_xattr_make "${1}"
 		fixstamp "${1}"
-		echo "${1}: OK"
+		case "${fingerprint:-"0"}" in
+			0)
+				echo "${1}: OK"
+			;;
+		esac
 	;;
 	*)
 		echo "${1}: FAILED"
@@ -2101,7 +2215,11 @@ if type zstd >/dev/null 2>&1; then
 		process_recovery_make "${1}"
 		process_xattr_make "${1}"
 		fixstamp "${1}"
-		echo "${1}: OK"
+		case "${fingerprint:-"0"}" in
+			0)
+				echo "${1}: OK"
+			;;
+		esac
 	else
 		echo "${1}: FAILED"
 		code=1
@@ -2231,7 +2349,8 @@ esac
 main() {
 local "name"
 name="${0##*"/"}"
-dev_mode=0
+selfcheck
+setdevmode
 hash_mark="user.${name}.hash"
 pkgchk "awk" "b2sum" "bzip2" "find" "grep" "gzip" "md5sum" "osslsigncode" "realpath" "sed" "stat" "tac" "unzip" "wc" "xz"
 data_exceptions
@@ -2373,10 +2492,342 @@ ce46602dd8ec8959c1700074efad20e35303b5e8f292c755190c9f331675a9656fba7a37254f6a11
 
 case "${dev_mode:-"0"}" in
 	1)
-		cert_fingerprints="${cert_fingerprints}
+
+	time_exceptions="${time_exceptions}
+2015-08-26T20:39:17+00:00  areca-7.5-windows-jre32-setup.exe
+2015-08-26T20:40:40+00:00  areca-7.5-windows-jre64-setup.exe
+2019-12-02T02:18:22+00:00  artmoney807eng32.exe
+2019-12-02T02:19:40+00:00  artmoney807eng64.exe
+2011-05-02T19:59:34+00:00  FFmpeg_v0.6.2_for_Audacity_on_Windows.exe
+2014-09-17T17:15:06+00:00  ffmpeg-win-2.2.2.exe
+2018-10-01T10:52:10+00:00  LADSPA_plugins-win-0.4.15.exe
+2018-04-13T14:24:40+00:00  lame_v3.100.exe
+2012-02-02T12:48:23+00:00  Lame_v3.99.3_for_Windows.exe
+2014-05-20T13:25:05+00:00  stickifier.exe
+2017-05-23T20:07:27+00:00  Bitmessage-0.6.1_64.exe
+2017-05-23T20:07:27+00:00  Bitmessage-0.6.1.exe
+2020-01-05T10:17:56+00:00  Bochs-win32-2.6.11.exe
+2020-01-05T10:17:39+00:00  Bochs-win64-2.6.11.exe
+2011-06-07T04:47:09+00:00  celestia-win32-1.6.1.exe
+2017-03-16T19:02:33+00:00  chemax192.exe
+2017-11-09T22:42:30+00:00  citra-setup-windows.exe
+2019-11-20T18:21:20+00:00  ClamAV-0.102.1.exe
+2012-04-29T10:07:04+00:00  clipx-1.0.3.9g-setup-x86.exe
+2019-11-07T04:58:22+00:00  CoreFTPServer64.exe
+2019-11-07T04:45:54+00:00  CoreFTPServer.exe
+2019-11-25T20:46:58+00:00  mini-sftp-server.exe
+2019-11-25T20:50:55+00:00  mini-sftp-server.x64.exe
+2014-03-27T12:19:47+00:00  doomrl-0997.exe
+2016-01-16T15:48:15+00:00  dup562exedrachac-setup.exe
+2013-08-29T21:21:51+00:00  EiskaltDC++-2.2.9-x86.exe
+2011-10-10T19:12:19+00:00  FBReaderSetup-0.12.10.exe
+2019-12-31T14:33:48+00:00  foobar2000_v1.5.1.exe
+2019-12-18T21:26:19+00:00  Freeciv-2.6.1-win32-gtk3-setup.exe
+2015-10-16T21:31:38+00:00  freecol-0.11.6-installer.exe
+2006-05-08T11:26:41+00:00  freeUserImport.exe
+2018-08-23T13:45:50+00:00  FreeOrion_v0.4.8_2018-08-23.26f16b0_Win32_Setup.exe
+2010-04-18T19:23:25+00:00  gedit-setup-2.30.1-1.exe
+2016-04-05T18:06:34+00:00  gedit-x86_64-3.20.1.msi
+2013-10-18T07:34:43+00:00  mb_driver_chipset_intel_8series.exe
+2013-10-18T07:40:04+00:00  mb_driver_intel_me_8series.exe
+2014-05-13T07:24:19+00:00  mb_driver_intel_usb3_8series.exe
+2014-05-13T07:38:04+00:00  mb_driver_lan_realtek_8series_win7.exe
+2014-05-13T07:18:18+00:00  mb_driver_vga_intel_32_8series.exe
+2014-05-13T07:18:42+00:00  mb_driver_vga_intel_64_8series.exe
+2013-10-18T07:34:43+00:00  mb_driver_chipset_intel_8series.exe
+2013-10-18T07:40:04+00:00  mb_driver_intel_me_8series.exe
+2014-05-13T07:38:33+00:00  mb_driver_lan_realtek_8series.exe
+2014-05-13T07:18:18+00:00  mb_driver_vga_intel_32_8series.exe
+2014-05-13T07:18:42+00:00  mb_driver_vga_intel_64_8series.exe
+2011-12-03T13:29:49+00:00  gtk2-runtime-2.24.8-2011-12-03-ash.exe
+2009-09-06T19:54:10+00:00  gtk2-themes-2009-09-07-ash.exe
+2018-12-19T22:27:34+00:00  gtkhash-w32-1.2+6+g8d8b353-1-installer.exe
+2018-12-19T22:28:07+00:00  gtkhash-w64-1.2+6+g8d8b353-1-installer.exe
+2017-03-22T18:39:41+00:00  HardlinkShellExt.exe
+2009-07-09T07:13:25+00:00  HashCheckInstall-2.1.11.exe
+2019-10-09T16:56:35+00:00  Hedgewars-1.0.0.exe
+2019-10-21T19:06:57+00:00  setup_i2pd_v2.29.0.exe
+2020-01-07T15:52:07+00:00  ADVANCED_Codecs_v1305.exe
+2018-03-27T17:41:27+00:00  Icaros_v3.0.3.exe
+2020-01-08T21:19:26+00:00  STANDARD_Codecs_v945.exe
+2018-11-03T18:30:02+00:00  icecast_win32_2.4.4.exe
+2011-01-13T09:16:28+00:00  SetupImgBurn_2.5.5.0.exe
+2018-03-12T10:12:28+00:00  inkscape-0.92.3-x86.exe
+2018-03-12T10:12:42+00:00  inkscape-0.92.3-x86.msi
+2019-01-16T01:03:24+00:00  inkscape-0.92.4-x64.exe
+2019-01-16T01:09:39+00:00  inkscape-0.92.4-x64.msi
+2019-01-16T01:03:43+00:00  inkscape-0.92.4-x86.exe
+2019-01-16T01:09:48+00:00  inkscape-0.92.4-x86.msi
+2018-04-30T17:17:45+00:00  ISStudio_Latest.exe
+2019-10-14T21:31:40+00:00  ipscan-3.6.2-setup.exe
+2016-05-30T12:11:08+00:00  irfanview_adobe_8bf_plugins.exe
+2017-10-11T08:54:26+00:00  irfanview_mrsid_plugin.exe
+2019-12-18T21:13:04+00:00  kdenlive-19.12.0.exe
+2019-12-18T21:25:39+00:00  kdenlive-19.12.0_standalone.exe
+2011-11-14T21:37:31+00:00  KernelEx-4.5.2.exe
+2018-05-31T13:16:19+00:00  K-Lite_Codec_Pack_1384_Basic.exe
+2018-05-31T13:18:14+00:00  K-Lite_Codec_Pack_1384_Full.exe
+2018-05-31T13:20:35+00:00  K-Lite_Codec_Pack_1384_Mega.exe
+2018-05-31T13:22:23+00:00  K-Lite_Codec_Pack_1384_Standard.exe
+2019-12-29T20:44:29+00:00  K-Lite_Codec_Pack_1532_Basic.exe
+2019-12-29T20:45:58+00:00  K-Lite_Codec_Pack_1532_Full.exe
+2019-12-29T20:47:46+00:00  K-Lite_Codec_Pack_1532_Mega.exe
+2019-12-29T20:49:02+00:00  K-Lite_Codec_Pack_1532_Standard.exe
+2019-11-16T11:40:06+00:00  kodi-18.5-Leia-x64.exe
+2019-11-16T11:39:47+00:00  kodi-18.5-Leia-x86.exe
+2018-11-27T02:11:46+00:00  koplayer-2.0.0.exe
+2019-10-27T15:38:34+00:00  love-11.3-win32.exe
+2019-10-27T15:38:34+00:00  love-11.3-win64.exe
+2017-05-25T13:41:18+00:00  MegaGlest-Installer-3.13.0_windows_32bit.exe
+2017-05-25T13:42:31+00:00  MegaGlest-Installer-3.13.0_windows_64bit.exe
+2019-12-30T21:55:32+00:00  MultiCommander_win32_(9.5.0.2570).exe
+2019-12-30T21:55:39+00:00  MultiCommander_x64_(9.5.0.2570).exe
+2016-01-23T19:38:43+00:00  namebench-1.3.1-Windows.exe
+2017-05-25T18:04:54+00:00  nfs-win-1.0.17083.msi
+2019-04-17T03:41:04+00:00  sshfs-win-3.5.19106-x64.msi
+2019-04-17T03:41:15+00:00  sshfs-win-3.5.19106-x86.msi
+2019-06-19T22:17:01+00:00  nGlide210_setup.exe
+2019-05-21T00:59:56+00:00  nistime-32bit.exe
+2019-12-16T00:55:59+00:00  nsis-3.05-setup.exe
+2019-11-17T14:05:46+00:00  OpenRA-release-20191117-x64.exe
+2019-09-16T19:30:18+00:00  openttd-1.9.3-windows-win32.exe
+2019-09-16T19:30:25+00:00  openttd-1.9.3-windows-win64.exe
+2016-04-30T18:06:55+00:00  pcsx2-1.4.0-setup.exe
+2019-12-29T17:54:55+00:00  peazip-7.0.1.WIN64.exe
+2019-12-29T17:55:43+00:00  peazip-7.0.1.WINDOWS.exe
+2015-06-21T04:37:48+00:00  poly3000.x32.exe
+2015-06-21T04:39:23+00:00  poly3000.x64.exe
+2018-02-25T00:15:11+00:00  Power8_v.1.6.1.1619.msi
+2019-10-06T15:19:45+00:00  PPSSPPSetup.exe
+2017-05-25T09:03:18+00:00  CharisSIL-5.000.exe
+2017-05-25T08:06:47+00:00  DoulosSIL-5.000.exe
+2007-05-17T00:38:15+00:00  praat4601_win98sit.exe
+2007-05-17T00:37:53+00:00  praatcon4601_win98sit.exe
+2018-12-31T00:49:23+00:00  privoxy_setup_3.0.28.exe
+2019-12-01T15:13:12+00:00  proton-wallet.Setup.1.1.1.exe
+2019-02-04T17:46:09+00:00  qemu-ga-x64.msi
+2019-02-04T17:46:09+00:00  qemu-ga-x86.msi
+2019-12-18T01:03:07+00:00  qbittorrent_4.2.1_setup.exe
+2019-12-18T00:59:01+00:00  qbittorrent_4.2.1_x64_setup.exe
+2019-10-31T03:57:38+00:00  dsp_stereo_tool_installer.exe
+2019-10-17T23:45:14+00:00  renpy-7.3.5-sdk.7z.exe
+2019-12-25T09:56:03+00:00  RetroArch-msvc2010-x86-setup.exe
+2019-12-25T15:16:36+00:00  RetroArch-x64-setup.exe
+2019-02-11T21:46:33+00:00  RetroShare-0.6.5-20190204-1-gfb005f041-Qt-5.12.0-setup.exe
+2018-10-29T01:35:08+00:00  Samsung_SSD_DC_Toolkit_for_Windows.exe
+2018-01-14T20:27:26+00:00  sauerbraten_2013_04_04_collect_edition_windows.exe
+2019-10-04T23:17:59+00:00  scummvm-2.1.0-win32.exe
+2019-10-12T17:28:51+00:00  scummvm-2.1.0-win32-win9x.exe
+2019-10-04T23:17:59+00:00  scummvm-2.1.0-win32-x86_64.exe
+2019-02-22T09:30:09+00:00  7z1900.exe
+2019-02-22T09:30:09+00:00  7z1900-x64.exe
+2017-09-18T15:12:39+00:00  Shareaza_2.7.10.2_Win32.exe
+2017-09-18T15:19:06+00:00  Shareaza_2.7.10.2_x64.exe
+2019-12-18T04:24:07+00:00  SiriKali-1.4.2.setup.exe
+2019-12-30T15:21:41+00:00  smartmontools-7.1-1.win32-setup.exe
+2012-06-08T15:50:48+00:00  SpeechAnalyzer3.1.msi
+2018-04-08T07:00:01+00:00  stduviewer.exe
+2019-12-24T16:17:08+00:00  stellarium-0.19.3.1-win32.exe
+2019-12-24T16:18:10+00:00  stellarium-0.19.3.1-win64.exe
+2020-01-03T18:30:36+00:00  SuperTuxKart 1.1.0 installer-32bit.exe
+2020-01-03T18:31:55+00:00  SuperTuxKart 1.1.0 installer-64bit.exe
+2017-01-17T00:19:38+00:00  syncany-0.4.8-alpha~x86.exe
+2017-01-17T00:42:20+00:00  syncany-0.4.9-alpha~x86_64.exe
+2017-01-16T16:03:37+00:00  syncany-cli-0.4.9-alpha.exe
+2019-08-04T19:38:38+00:00  SyncthingGTK-v0.9.4.4-win32-full-installer.exe
+2019-11-11T19:58:53+00:00  tagscan-6.1.2-setup.exe
+2019-09-23T09:35:33+00:00  wesnoth-1.14.9-win32.exe
+2018-07-20T23:18:38+00:00  setup-qtox-i686-release.exe
+2018-07-20T23:19:08+00:00  setup-qtox-x86_64-release.exe
+2018-03-22T17:25:50+00:00  uget-integrator_1.0.0.1.exe
+2013-07-26T16:32:04+00:00  vcxsrv.1.14.2.1.installer.exe
+2019-07-27T15:47:49+00:00  vcxsrv.1.20.5.1.installer.exe
+2019-07-27T15:47:49+00:00  vcxsrv-64.1.20.5.1.installer.exe
+2020-11-10T15:35:23+00:00  VirtualRouterInstaller.msi
+2013-12-14T20:13:22+00:00  vtuploader2.2.exe
+2018-06-05T14:52:20+00:00  warsow-2.1.2-setup.exe
+2019-08-31T20:16:14+00:00  warzone2100-3.3.0_x86_installer.exe
+2019-08-31T20:16:28+00:00  warzone2100-3.3.0_x86_portable.exe
+2019-12-08T22:03:23+00:00  WaterfoxPortable_2019.12_English.paf.exe
+2015-02-23T08:23:19+00:00  WinDjView-2.1-Setup.exe
+2019-10-13T23:42:12+00:00  yacy_v1.922_20191014_9966.exe
+2019-12-31T22:26:23+00:00  youtube-dl.exe
+2019-10-30T08:22:38+00:00  YUMI-2.0.6.9.exe
+2019-12-30T18:22:30+00:00  yuzu_install.exe
+2018-12-09T09:54:14+00:00  0ad-0.0.23b-alpha-win32.exe
+
+"
+	
+	exe_exceptions="${exe_exceptions}
+1668f62c83acb1dd35349f745177963352068221  areca-7.5-windows-jre32-setup.exe
+3837d152d1e4c773b2fcb87e2dc684dbe1db31b4  areca-7.5-windows-jre64-setup.exe
+60445344f04556feecd9935cddd5053183913ed7  artmoney807eng32.exe
+a8662d88dbba5ea18a63a26ed24dc3e4590c6f0e  artmoney807eng64.exe
+fa9d6468d9ea91c5bd24014e19f767167a0cc37e  FFmpeg_v0.6.2_for_Audacity_on_Windows.exe
+59829411d706b4d64023c9e05fdbc5d6c698d4fa  ffmpeg-win-2.2.2.exe
+bbcdc14f464a379e5dc0dbf1b70b5beceaa651d2  LADSPA_plugins-win-0.4.15.exe
+3d9b43d23001247b255e046bc6b7b7dfa7037f67  lame_v3.100.exe
+a9aa7463aa9b685bdd20a5e12448c25b40a7677f  Lame_v3.99.3_for_Windows.exe
+9e4cfa96a7cff1d9679ff18aacfe91f99bc531d7  stickifier.exe
+306608530d8e10487de7ec25c22970bdcccf14d1  Bitmessage-0.6.1_64.exe
+2d3df96da643c7f21d8c39dcceb63b3fa71043fd  Bitmessage-0.6.1.exe
+493809db0ce1afd624a8e47c38edb5ee38b9fcbc  Bochs-win32-2.6.11.exe
+4c3aa9d2bc67b7968633e888918f2593a535c2b1  Bochs-win64-2.6.11.exe
+78c674cc834dfd7928f4afc10d06acf41e2920c2  celestia-win32-1.6.1.exe
+c0f64aec36e9160014cc32ee1f0299851484d839  chemax192.exe
+1f2a3b4014a309c87f0cfb03489d4360aba7720d  citra-setup-windows.exe
+3069b8e568757be5721b4a86e7ba56563351691a  ClamAV-0.102.1.exe
+b156ee0654536065b4fd9f7a780045541b587f89  clipx-1.0.3.9g-setup-x86.exe
+b86b2a2e729a82b67846f93a5034dfc7d5ba530d  CoreFTPServer64.exe
+ab3b49e3ea2695da94204ab606741899de75a140  CoreFTPServer.exe
+aaa79928836268ddacda9a2b6bf22aa294c64e58  mini-sftp-server.exe
+2d25f5d6b7f6b07621a047fdc58ed89553901769  mini-sftp-server.x64.exe
+a1a106eda4a9b99162ec409f78ff420838b42e30  doomrl-0997.exe
+3a88aae6d9afb748f38aa834402a447ccc6579de  dup562exedrachac-setup.exe
+aab07a00b289950756a460fc016a8bd3453dcc98  EiskaltDC++-2.2.9-x86.exe
+bd65f61df63765bdc142608514867c0503ce7eaf  FBReaderSetup-0.12.10.exe
+6bdffe6142aa288f465b1de7a6867dcba36e3686  foobar2000_v1.5.1.exe
+2fe8a645dd3388300787688808b21207b7e3785f  Freeciv-2.6.1-win32-gtk3-setup.exe
+12ebdb085053398e8c121896a2fe5bb1dc21a1c0  freecol-0.11.6-installer.exe
+39739fcf775fe228bd1b4407671cefa79defa00f  freeUserImport.exe
+9ca4370327b8548c63fdbe27ed60b7dcc0302bd1  FreeOrion_v0.4.8_2018-08-23.26f16b0_Win32_Setup.exe
+0d519fb3019c6eafd9422c59fefaeab94b464324  gedit-setup-2.30.1-1.exe
+f31f31fc547f3376f5889393e4005b69288d7b4d  gedit-x86_64-3.20.1.msi
+dc09e75a5baedae9c5ad57f0b17d5f9c4ce67809  mb_driver_chipset_intel_8series.exe
+a411dddffd024e27509a3340d900facc3cfea56b  mb_driver_intel_me_8series.exe
+03b1f7ccbfa5dd15f2db6e36fc9386439c6c2236  mb_driver_intel_usb3_8series.exe
+84f7ed4a8c6bd6a89cb2026627911e133a25e431  mb_driver_lan_realtek_8series_win7.exe
+08e226d3437bd4b56e3bbd1286b206f8c299fe55  mb_driver_vga_intel_32_8series.exe
+808ae16891adf679dcc1e19b59aafd263d1aafe2  mb_driver_vga_intel_64_8series.exe
+dc09e75a5baedae9c5ad57f0b17d5f9c4ce67809  mb_driver_chipset_intel_8series.exe
+a411dddffd024e27509a3340d900facc3cfea56b  mb_driver_intel_me_8series.exe
+01e77536afc1592c622d9a3069bb3cd1cac7b9ab  mb_driver_lan_realtek_8series.exe
+08e226d3437bd4b56e3bbd1286b206f8c299fe55  mb_driver_vga_intel_32_8series.exe
+808ae16891adf679dcc1e19b59aafd263d1aafe2  mb_driver_vga_intel_64_8series.exe
+6ef68c6507e12630bc5c2881cc26f3b05e0fe4a4  gtk2-runtime-2.24.8-2011-12-03-ash.exe
+0e0a12d5fff5e617c1c64d903dc885c5d9f6b58e  gtk2-themes-2009-09-07-ash.exe
+0bbed5ab99a78e912eb56d718c7c87267e21d368  gtkhash-w32-1.2+6+g8d8b353-1-installer.exe
+bcf5ef05293f7ef050ee5b676948a6ba43084ef1  gtkhash-w64-1.2+6+g8d8b353-1-installer.exe
+a05df5b8bc170884c03f406cf2e211d2ba707a32  HardlinkShellExt.exe
+d3cb884c8fc3f04720d176777508c4f5dd2df40c  HashCheckInstall-2.1.11.exe
+58b5998767ef7d3a595d7d80079de9da6b3def7a  Hedgewars-1.0.0.exe
+0dbb64d9e800339a5c6096923ecf8295cd89bc78  setup_i2pd_v2.29.0.exe
+674ef4b462185427506300368e42f73546cbbd92  ADVANCED_Codecs_v1305.exe
+3fe7eef0dd79fb64e41eaa77277cf3eb33215d3b  Icaros_v3.0.3.exe
+faede712ddb2a1f463cc49a5130ab0567fe7a3d5  STANDARD_Codecs_v945.exe
+ada83c2d110258146342daa82ed5893eda867d52  icecast_win32_2.4.4.exe
+3a89daee2c931d0aaa7b102d3da9d2174dc5875e  SetupImgBurn_2.5.5.0.exe
+3635871bcc0fe0db6d9ff680dac4ae16de9296e1  inkscape-0.92.3-x86.exe
+766077139409b3c11159a27ef141cfd45900b8e0  inkscape-0.92.3-x86.msi
+f88780116c7c27382003773cad19b0517123920c  inkscape-0.92.4-x64.exe
+cef8e859d00da6abd73cca5d98291f24312fc46f  inkscape-0.92.4-x64.msi
+fa5b269df9cf6a335acc15d9cee1ab443513a34e  inkscape-0.92.4-x86.exe
+4c45908c45d6083c837f0c68a66deb4f08b2a182  inkscape-0.92.4-x86.msi
+53b3c96f34f689505fa2fafbd1072d3431951017  ISStudio_Latest.exe
+bc349262b2803caa96a56aac6ed9268570f2ed39  ipscan-3.6.2-setup.exe
+d80ee6d9bffda774ee7a5039e3b819549ec8b51e  irfanview_adobe_8bf_plugins.exe
+5d5a1dd3e694480c2aed97adc2caaef457800a45  irfanview_mrsid_plugin.exe
+d95f14633b70843e5e1463e27c5f6a9d204cbe15  kdenlive-19.12.0.exe
+64fd595dabf9014bf0e47293f58a7c0caaf506ef  kdenlive-19.12.0_standalone.exe
+80e9342f1ae1a0ada5f07b6b92080d8d56617492  KernelEx-4.5.2.exe
+22d6e3b75ce3d78597b403117cb5a68aac03922c  K-Lite_Codec_Pack_1384_Basic.exe
+6109d9cb7e7ec0a93a2f065d72c6a2d5d8aeaaf7  K-Lite_Codec_Pack_1384_Full.exe
+575872c912cf494ec66c07cbfab475b7117d2a1d  K-Lite_Codec_Pack_1384_Mega.exe
+50d333296580230aee5d35c11a4eb074bac0ce7c  K-Lite_Codec_Pack_1384_Standard.exe
+f39ee8517f15b9b0a1fb367ddbdc698f332540e0  K-Lite_Codec_Pack_1532_Basic.exe
+4950ae00f042994a355ef093401d5d6f83ff7b29  K-Lite_Codec_Pack_1532_Full.exe
+812996913c0654bb36019ebdce17b35f2e56c766  K-Lite_Codec_Pack_1532_Mega.exe
+df41e5313056afbc98a90b4b0de904af835c1473  K-Lite_Codec_Pack_1532_Standard.exe
+07ce791a36db7c221cf1a71adc92e6db5bf8a964  kodi-18.5-Leia-x64.exe
+1a1f8f8c3fd5b1c41714189b80bccbfc2f3006c5  kodi-18.5-Leia-x86.exe
+a45a667f3764eb172fa325494a96a9b42f2e0868  koplayer-2.0.0.exe
+74becb12526aedef68d2068c74d3dc00901906dc  love-11.3-win32.exe
+9f657d29beacef1a22c6f4c3dd27e1be7eabb015  love-11.3-win64.exe
+747851ca8dbcda0ad5db0b8e152345d747781740  MegaGlest-Installer-3.13.0_windows_32bit.exe
+6e7b0bbd2147e59fd412e726b2bc6db4500b0647  MegaGlest-Installer-3.13.0_windows_64bit.exe
+829be5440c13962e516254dc0cfd46e5363aa04a  MultiCommander_win32_(9.5.0.2570).exe
+f5bc34bb60d4c9f571b97e4e53d542a8207a8803  MultiCommander_x64_(9.5.0.2570).exe
+b33778303d37bb6a2e6fe4861c72390a41f3ab7a  namebench-1.3.1-Windows.exe
+90ef600589fa741e4e320a71f3543fedafaf277b  nfs-win-1.0.17083.msi
+d8f9a63b1d39a74074b7a505dba4d49aca6c02fd  sshfs-win-3.5.19106-x64.msi
+a2ecb95aec9a53f02d521c01cca85cfccb7aa2d5  sshfs-win-3.5.19106-x86.msi
+81762943ca942b25bea37645123a19a9a3545097  nGlide210_setup.exe
+9166ac8b7fa258f948b8a54cd7f25add05c86a91  nistime-32bit.exe
+efc378e5a9242cfae47c072d96a8882ef33718d5  nsis-3.05-setup.exe
+dde46e097d71b946b7c281fbc7c41687b1ac26d3  OpenRA-release-20191117-x64.exe
+b7249246013c920fc7e221dc847b1deb651d5745  openttd-1.9.3-windows-win32.exe
+bd75f2d7c989237517b98a93be4a1c824cc8c641  openttd-1.9.3-windows-win64.exe
+db4ec0ca1e081f53f0870a671c4005139cf4af39  pcsx2-1.4.0-setup.exe
+7bd8aa5c0dcbf5a8ef51b5e9371781babb1edfc4  peazip-7.0.1.WIN64.exe
+c8dcd279077d97f81d44e95bfa68ed6b52f53e6b  peazip-7.0.1.WINDOWS.exe
+5f6c8e8a4fe0797236d371e94c3e6f54d7da6912  poly3000.x32.exe
+98a2f7c8bdd9198254b71fb9d375050df87098f9  poly3000.x64.exe
+f8b92ac885349a9fadbac90f2066cafe20330669  Power8_v.1.6.1.1619.msi
+cc18b086cd2b4fe592e49e31ecfea136b0602012  PPSSPPSetup.exe
+3eef89a96c67354803a12ec8a5d66eb0a425386d  CharisSIL-5.000.exe
+2f5b1e3716a3c49b0d3a6aa47b28fbe548866f88  DoulosSIL-5.000.exe
+e90e9ec736d02fb9a6594b2bc5d76aaeb9ee759b  praat4601_win98sit.exe
+c70033cee4bb4b84b34736efdd5c9e2e5f1d0af9  praatcon4601_win98sit.exe
+0cf98c86bc6dc6af94f2b96ee5da8054ea1837ce  privoxy_setup_3.0.28.exe
+c88a05f22ab7ebbadb1bdd1e532b5f4c286ef826  proton-wallet.Setup.1.1.1.exe
+50cb4a3840665d4ffdff1c0d27a14074165fc501  qemu-ga-x64.msi
+7f298036d0445dc32601e8416bc59e623639d282  qemu-ga-x86.msi
+d9576e61e63c0b56c25135c662dc4c59688f4a1a  qbittorrent_4.2.1_setup.exe
+192a86af595843062acda37a1e2ad0363fb0c157  qbittorrent_4.2.1_x64_setup.exe
+bc0dec35a2bede9c787c61166148e7daddbf9345  dsp_stereo_tool_installer.exe
+923360124f2c33c1668b1204bf3f2e34cc27c361  renpy-7.3.5-sdk.7z.exe
+8178d9e7eb55d149008770d8b8fd6afaae46d725  RetroArch-msvc2010-x86-setup.exe
+5d697f27e7551312401b39264a7ff8925a0a37bf  RetroArch-x64-setup.exe
+089783fa439b21dde4e541e0159add37105fdfe3  RetroShare-0.6.5-20190204-1-gfb005f041-Qt-5.12.0-setup.exe
+fcac55673b792a9e3c39e6a2dd3bf73ba84cec9f  Samsung_SSD_DC_Toolkit_for_Windows.exe
+1ae628e27ba5536a8c8ad1aba39d24916944a655  sauerbraten_2013_04_04_collect_edition_windows.exe
+1efc9e628b7613949bfb74547028ffe90e3b835c  scummvm-2.1.0-win32.exe
+b372d569d66d8475915408220d9e6a8149eb767f  scummvm-2.1.0-win32-win9x.exe
+ec98ebadca770ca70af314f9ea688415ee0d63e8  scummvm-2.1.0-win32-x86_64.exe
+2f23a6389470db5d0dd2095d64939657d8d3ea9d  7z1900.exe
+9fa11a63b43f83980e0b48dc9ba2cb59d545a4e8  7z1900-x64.exe
+222767182c0c883f63e673b677425e2279c704dd  Shareaza_2.7.10.2_Win32.exe
+7a62130327ce2562a53332be6f890d7b8dc00aec  Shareaza_2.7.10.2_x64.exe
+e40cb1aa7db8c2c31da610792ec8103392202960  SiriKali-1.4.2.setup.exe
+afc25bac715dd0ce06105bce75f0c8c653e040de  smartmontools-7.1-1.win32-setup.exe
+f9bdff2482b54c7493b6fd00799701a7209e4654  SpeechAnalyzer3.1.msi
+7896ec0f70678b6bd7e576462da72232037a28c2  stduviewer.exe
+5ec8b84d937635ebb8803bef5eda4fd940050745  stellarium-0.19.3.1-win32.exe
+874810f7ffbc4e1a3425cab0319cf62cd49d59bd  stellarium-0.19.3.1-win64.exe
+c60e2b49df8386509f056c8cf711e27c5c3c129d  SuperTuxKart 1.1.0 installer-32bit.exe
+8276e52ab9a66d2884fbb53b1dbe9ee7b6a61555  SuperTuxKart 1.1.0 installer-64bit.exe
+da33888588fe69d12334d25c6dd70f1f70b13085  syncany-0.4.8-alpha~x86.exe
+87f4ec2d4e45ac4ac3006ce17d21e8a079f62b92  syncany-0.4.9-alpha~x86_64.exe
+36de390066995172067c48e7ce8a543064657c97  syncany-cli-0.4.9-alpha.exe
+bf1a952a74155ec9171affd73e947b98557bad1a  SyncthingGTK-v0.9.4.4-win32-full-installer.exe
+fd554d48fa6d59b39d905cd4894b1349a0f3b33c  tagscan-6.1.2-setup.exe
+53af1bc82753df09c9904a88c4fa109563abba11  wesnoth-1.14.9-win32.exe
+d38eec712f74732439b7d3854316648e5627843c  setup-qtox-i686-release.exe
+54d44b86bea638be9c7e004785d4084785f51157  setup-qtox-x86_64-release.exe
+f38d0eef24403b321f4085d8381d274c676ce260  uget-integrator_1.0.0.1.exe
+3a6b69a7f383ff638a6d6f93f580d90f1461fc8f  vcxsrv.1.14.2.1.installer.exe
+591868961110636c7dc870bf7cf51640c969360c  vcxsrv.1.20.5.1.installer.exe
+4556b51226873d88380a15c81e83af2f3ba460a3  vcxsrv-64.1.20.5.1.installer.exe
+c748600d547c10f00426150f330bd5b1e35f659f  VirtualRouterInstaller.msi
+3ccbbfffd0da76f72dd99ac39afcfdfacd5f16e2  vtuploader2.2.exe
+60b9f9974157f723a085af9e0e7fb42adc56d7c3  warsow-2.1.2-setup.exe
+49bce920677f516551cd6f567030a617ddbb5e71  warzone2100-3.3.0_x86_installer.exe
+aa3e6e08ff4b5881654a7da13ac4b2bda3ce2a1b  warzone2100-3.3.0_x86_portable.exe
+474fa01e45926d18717c8e82c5bc2e1115a3af6a  WaterfoxPortable_2019.12_English.paf.exe
+bbf32f86dc8db03a73c1331a04d73b41bc80c52b  WinDjView-2.1-Setup.exe
+2303e225a57db127a7f90a173502d5e6c484ab03  yacy_v1.922_20191014_9966.exe
+af3f497ecdd2b723b113a5d83bb653a943cdd8c0  youtube-dl.exe
+a048a6f148b914d44e77017017e4e8761faf5778  YUMI-2.0.6.9.exe
+f099126307a76bc2de3b199580ab597b02e11b2e  yuzu_install.exe
+dcdde5a9130b923c08550a033e6923e1a17f7248  0ad-0.0.23b-alpha-win32.exe
+
+"
+	
+	cert_fingerprints="${cert_fingerprints}
 54445bec02c40ddd95bf5a4ea910cbf59fed5398212600a61e976fd6e53262c771753cc94ad425915781b20a5f7ef406a91f16116e9d80f40fed2d5a7fc134e1  Kim Jensen/advanced_renamer_setup_3_85.exe
 2f2595b3c9ffcc296a86e262896e0b906afef4f67b21d58273bbfff9f1c97e4e1fc2944187db525a87658b796122074af02ff7a087fa89185dae51c22b713de2  IP Izmaylov Artem Andreevich/aimp_4.60.2169.exe
 eed195942c4e931f8babf5fc30b87985a86ee7a2b8675e34307d05de600ffe2041d11bb5d34ce361873eda6049053d66a7b1d348763dbc9ecc67327f445083c3  Advanced Micro Devices, Inc/win7-radeon-software-adrenalin-2020-edition-19.12.2-dec12.exe
+d792ce62e49626386c1c11bf822c731b61c8eeca9e7e8c14504fa83d2578fb89edc233ef130e65208089628df5fa5547c772757d53587a5b04575c7bf0a403b0  Advanced Micro Devices, Inc./radeon-software-adrenalin-2020-21.4.1-win7-64bit-apr19.exe
 fd4c7f11aa069c8801a847d243fbec5965bdf1cf4f5a63c71a72688491c12a5733a99cbb7019bb8570f42f6f6f830a0109ca2e37f5782f36314c9724491ee565  SplitmediaLabs Limited/XSplitVersion4.0.1910.2401.exe
 a7fa328cd8f6ef929fca5b4a8a9ad141e74b1643f91d65daeddc1309e398511ba506d66126dcc042183d50c1a61dc7999892fabf09697dec3307db5f8788826f  Google LLC/android-studio-ide-191.6010548-windows.exe
 60a9a9f2a615735fec850d1816c4d97b509c92fe448e01dd595fba0d608694eec045d11e57cc6aae6fed8074ec8b0eed90639f339e21bc2a0cb1966e1def6f44  Microsoft Corporation/adksetup.exe
@@ -2439,6 +2890,8 @@ a5a3359473a2147fc9e994a7118016f82a065b9905de9f154e812d69381e04b8c53bbc81a988629c
 7da43ad6175ec969581007826807f16f316cda6501afc912049b26a0f873f356cdec0917dad44d7390650eab3a0503afab385c229b4e26427d810590165963b2  Realtek Semiconductor Corp/mb_driver_lan_realtek_8series_win7/AutoInst.exe
 87ec2b11b06caa09ffe3586e6b1a5104e40dbd93b189e2f69fe3b4d365a3e7a96d91d06e2f957a96a288c9d3dd9a6294fe666a88a4f9ccd190660ce30fef6aeb  Giga-Byte Technology/mb_driver_lan_realtek_8series_win7/CPSetup.exe
 fb61e16c2da2274aaa289ae0eabf435ec5f88770f07865e690e5f27f05b2a42aed5242a4b1c299c8036d125087f31bbd2608b47c3e123cbce1f78619df23886d  Realtek Semiconductor Corp/mb_driver_lan_realtek_8series_win7/setup.exe
+4378aca33fbc5c686f8ff553a4ab7721799c1edacdb7401cf934825ab4c75a613fbc36a29de3a4cad2c850b8c5cfad3ede24c146479d03b6a53cde7bbc8fbbb1  Jernej Simoncic/gimp-2.10.4-setup-2.exe
+91fdf43cf553fd50ce6bffdac34e6ef7e231ccafbdcaca8feb85df88e39dd1130d88e1321a44660b636015b6f77509f5abae095e263e37df6f21e597f6a24b8a  Jernej Simoncic/gimp-2.10.14-setup-1.exe
 3bfeaccfe1dcba96d5e101ee19c3ba3f5e394eb7613e9e778b176f22d65c2a4c205206fb9eb3d13d9f98a4377bdb7bbceb31aca9f77dcc3464307efd79b2594f  GitLab Inc./GitterSetup-4.1.0.exe
 45857062dc860d4bd36d566476a58af3c2d590721fd07908baec57097774a1890efb2e2d33f40c9a4b119b37392a072d95a8f4db653b39c5cff8d00006ee3b4c  Google LLC/GoogleDriveFSSetup.exe
 c281b37cbc5b3216748666253e97f8913d12675dacdaf123024900eb8cf29a7aaf5a6948d29fbcaff5f8dbff90a0d1e8592da88ba483feff4f70a94d37fa1176  Google LLC/gsync.msi
@@ -2571,6 +3024,7 @@ c95f4b20e05ffd6df65fd03054b6d1efde521e3ad9f349180a0f50446441f3e739e6c83c0068c730
 b55228fc73f772582f47be094fe7ba1afb011da1350d1948efb744ad9d352e9cb78da3732282734a8995f2ecf2c2d2628e7893297be8b3ebef7bd7e9fb2334c8  Fotis Zafiropoulos/MPC-HC.1.7.13.x64.exe
 0bafb10e588d2653762adb8528efec25891bb09015ffdbe9b4755b3cce2ebefa419395aa5980c97c62ac8a829adccf50d82e5afa90fd6d6dadd19fdfccad3f42  mkrautz.dk/mumble-1.3.0.msi
 3b51c777d9c51147e7e8fa335de8a85083114d519ae3fb2569cfe790180fbd636596b0447612cd6066ed1491f10c07070681ef7e17d5d90c36cf5d55fdbc2964  Nextcloud GmbH/Nextcloud-2.6.2-setup.exe
+4dc5f993ad35a93dd481488c705ed1df08208f66c155cb9a123b8681aff94d500a26a766a68332b02a6401f05a561e10d0d2af31c27f2681b916215932136dcf  NAVIMATICS LLC/winfsp-1.5.20002.msi
 cf8cab010504299ebb47b5f29a5d58ab70bf3be777e618f2623b804b1c9ed9252e349033456941c68c66fb856223212f10c6f9575fccd8c060475e8885371f1d  Notepad++/npp.7.8.2.Installer.exe
 3e885299b369eee852024d2ffb8f8cf341335235431f8f5d8d894733749ac5f0133713efd6ec83a9707445676257303b2078a5976c2ba1d45d72a6a152cf078e  Nox Limited/nox_setup_v6.6.0.0_full_intl.exe
 b70e8006276e26e1e11cb33a75838fcad3e90b8d6feb91a2eadb0897b9b849913bb7d403cce7e3de9a7edb726aa558a997b6c9b52ec4a57a74ebfdaecc142c67  Creative Labs Inc/oalinst.exe
