@@ -1,7 +1,7 @@
 #!/bin/sh
 {
-# 2b1427462ee9e15f047580c2ef42dce3
-# d8aa5f75043a9c445a62b074233cb836fb6e505ccaf0afdcc2b44e5678a42e6ea37165a70eb0d810542bd49167eb5ad89b9592384b777403fbee5db19a98a95b
+# 16896d16e83d948aeb64008238a81b3a
+# fd59f8b3f6ec209e2fb9d1f75bc073655ab1e0b33b3febbc546dc3800378505018875c678e74983ce9a0e98ee9c9fe0f1b8e4a85f0213b983f28657921011d89
 set -u
 
 necho() {
@@ -568,7 +568,7 @@ fixstamp() {
 	esac
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${1}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${1}: ${stmp_msn}"
 			stamp=""
 		;;
 		*)
@@ -577,24 +577,24 @@ fixstamp() {
 	esac
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
-		echover_colour "${bold_timestamp}: ${stmp_msf}"
+		echover "${bold_timestamp}: ${stmp_msf}"
 		funccode=1
 	fi
 	if [ -s "${1%".exe"}-1.bin" ]; then
 		for bin in "${1%".exe"}-"*".bin"; do
 			if ! touch -cmt "${stamp}" -- "${bin}" 2>/dev/null; then
-				echover_colour "${bold_timestamp}: ${stmp_msf}"
+				echover "${bold_timestamp}: ${stmp_msf}"
 				funccode=1
 			fi
 		done
 	elif [ -s "${1%".exe"}.bin" ]; then
 		if ! touch -cmt "${stamp}" -- "${1%".exe"}.bin" 2>/dev/null; then
-			echover_colour "${bold_timestamp}: ${stmp_msf}"
+			echover "${bold_timestamp}: ${stmp_msf}"
 			funccode=1
 		fi
 	fi
@@ -616,7 +616,7 @@ fixstamp() {
 	stamp="${stamp%%"'>"*}"
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			stamp=""
 		;;
 		*"Z")
@@ -628,12 +628,12 @@ fixstamp() {
 	esac
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
-		echover_colour "${bold_timestamp}: ${stmp_msf}"
+		echover "${bold_timestamp}: ${stmp_msf}"
 	fi
 	}
 	
@@ -663,12 +663,12 @@ fixstamp() {
 	stamp=$( 7z l -- "${1}" | seven_zip_date )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
-		echover_colour "${bold_timestamp}: ${stmp_msf}"
+		echover "${bold_timestamp}: ${stmp_msf}"
 	fi
 	}
 	
@@ -692,12 +692,12 @@ fixstamp() {
 	stamp=$( echo "${stamp}" | sort -rn | tar_stamp_head )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
-		echover_colour "${bold_timestamp}: ${stmp_msf}"
+		echover "${bold_timestamp}: ${stmp_msf}"
 	fi
 	}
 	
@@ -706,19 +706,19 @@ fixstamp() {
 	stamp=$( 7z l -- "${1}" | grep -m 1 -- "^Modified = " )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	stamp=$( echo "${stamp}" | sed -nE 's/Modified = ([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})/\1\2\3\4\5.\6/p' )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
-		echover_colour "${bold_timestamp}: ${stmp_msf}"
+		echover "${bold_timestamp}: ${stmp_msf}"
 	fi
 	}
 	
@@ -737,12 +737,12 @@ fixstamp() {
 	stamp=$( echo "${stamp}" | sort -rn | tar_stamp_head )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
-		echover_colour "${bold_timestamp}: ${stmp_msf}"
+		echover "${bold_timestamp}: ${stmp_msf}"
 	fi
 	}
 	
@@ -754,7 +754,7 @@ fixstamp() {
 	stamp=$( tar --list --verbose --full-time -f "${1}" )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
@@ -762,12 +762,12 @@ fixstamp() {
 	stamp=$( echo "${stamp}" | sort -rn | tar_stamp_head )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
-		echover_colour "${bold_timestamp}: ${stmp_msf}"
+		echover "${bold_timestamp}: ${stmp_msf}"
 	fi
 	}
 
@@ -779,19 +779,19 @@ fixstamp() {
 	stamp=$( identify -verbose -- "${1}" | grep -m 1 -- '^    exif:DateTime: ' )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	stamp=$( echo "${stamp}" | sed -nE 's/    exif:DateTime: ([0-9]{4}):([0-9]{2}):([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})/\1\2\3\4\5.\6/p' )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
 	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
-		echover_colour "${bold_timestamp}: ${stmp_msf}"
+		echover "${bold_timestamp}: ${stmp_msf}"
 	fi
 	}
 
@@ -803,7 +803,7 @@ fixstamp() {
 	stamp=$( ffmpeg -i "${1}" -f null - 2>/dev/stdout | grep -m 1 -- '^    creation_time   : ' )
 	case "${stamp:-""}" in
 		"")
-			echover_colour "${bold_timestamp}: ${stmp_msn}"
+			echover "${bold_timestamp}: ${stmp_msn}"
 			return 1
 		;;
 	esac
@@ -815,7 +815,7 @@ fixstamp() {
 		;;
 	esac
 	if ! touch -cmt "${stamp}" -- "${1}" 2>/dev/null; then
-		echover_colour "${bold_timestamp}: ${stmp_msf}"
+		echover "${bold_timestamp}: ${stmp_msf}"
 	fi
 	}
 	
@@ -1688,9 +1688,9 @@ if type b2sum >/dev/null 2>&1; then
 			case "${#hash}" in
 				128)
 					if setfattr -n "${hash_mark}" -v "${hash}" -- "${1}" 2>/dev/null; then
-						echover_colour "${bold_xattrs}: ${1}: Creation ${green_ok}" 1>&2
+						echover "${bold_xattrs}: ${1}: Creation ${green_ok}" 1>&2
 					else
-						echover_colour "${bold_xattrs}: ${1}: Creation has ${red_failed}" 1>&2
+						echover "${bold_xattrs}: ${1}: Creation has ${red_failed}" 1>&2
 						setfattr -x "${hash_mark}" -- "${1}" 2>/dev/null
 						code=1
 						return 1
@@ -2367,13 +2367,13 @@ case "${no_xattrs:-"0"}" in
 	1)
 		if getfattr --only-values -n "${hash_mark}" -- "${1}" >/dev/null 2>&1; then
 			if setfattr -x "${hash_mark}" -- "${1}" 2>/dev/null; then
-				echover_colour "${bold_xattrs}: ${1}: Deletion ${green_ok}" 1>&2
+				echover "${bold_xattrs}: ${1}: Deletion ${green_ok}" 1>&2
 			else
-				echover_colour "${bold_xattrs}: ${1}: Deletion ${red_failed}" 1>&2
+				echover "${bold_xattrs}: ${1}: Deletion ${red_failed}" 1>&2
 				code=1
 			fi
 		else
-			echover_colour "${bold_xattrs}: ${1}: Finding attributes has ${red_failed}" 1>&2
+			echover "${bold_xattrs}: ${1}: Finding attributes has ${red_failed}" 1>&2
 		fi
 	;;
 esac
