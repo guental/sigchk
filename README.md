@@ -8,7 +8,7 @@ sigchk [OPTION]... [FILE]...
 
 **Options** 
 
-***-f, ---fingerprint*** show unknown installer fingerprints
+***-f, --fingerprint*** show unknown installer fingerprints
 
 ***-t, --timestamp*** try to recover modification dates
 
@@ -21,6 +21,8 @@ sigchk [OPTION]... [FILE]...
 ***--no-cert-exceptions*** do not use built-in certificates
 
 ***--no-local*** do not use local checksums
+
+***-c, --colour*** colourize the output
 
 ***-q, --quiet*** quiet mode
 
