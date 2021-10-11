@@ -1,7 +1,7 @@
 #!/bin/sh
 {
-# fe54adae54efe28ffbfde7645994f041
-# be18d9aafdb1cf89606bbe601e56bf24f6e7dbba2837be676eb2f835fc7f9cbff6d06afb3d301cedaa26c745d73f297f6a86db872ae55b103f21ecd17eaf169b
+# bb2d38c9e660ea1ae3092a1837e07db1
+# f6d9eea31c9305e3699d0002bfb9b056a021ec7b62bf5582f8013d63a694259480148fd81a979df0f6995ea00fb3f89af0f4d566ca037eb2d3fe48369c1f1a01
 set -u
 
 necho() {
@@ -2218,14 +2218,21 @@ if process_xattr "${1}"; then
 	fi
 fi
 if type unrar >/dev/null 2>&1; then
-	rar_name="${1/%".part1.rar"/".rar"}"
-	rar_name="${rar_name/%".part01.rar"/".rar"}"
-	rar_name="${rar_name/%".part001.rar"/".rar"}"
-	rar_name="${rar_name/%".part0001.rar"/".rar"}"
-	rar_name="${rar_name/%".part00001.rar"/".rar"}"
 	case "${1}" in
-		*.part1.rar|*.part01.rar|*.part001.rar|*.part0001.rar|*.part00001.rar)
-			:
+		*.part1.rar)
+			rar_name="${1%".part1.rar"}.rar"
+		;;
+		*.part01.rar)
+			rar_name="${rar_name%".part01.rar"}.rar"
+		;;
+		*.part001.rar)
+			rar_name="${rar_name%".part001.rar"}.rar"
+		;;
+		*.part0001.rar)
+			rar_name="${rar_name%".part0001.rar"}.rar"			
+		;;
+		*.part00001.rar)
+			rar_name="${rar_name%".part00001.rar"}.rar"
 		;;
 		*.part[2-9].rar|*.part[0-9][0-9].rar|*.part[0-9][0-9][0-9].rar|*.part[0-9][0-9][0-9][0-9].rar|*.part[0-9][0-9][0-9][0-9][0-9].rar)
 			process_recovery_make "${1}"
