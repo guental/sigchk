@@ -1,0 +1,149 @@
+#!/bin/sh
+
+set -u
+
+set_completion() {
+module="_sigchk_module()
+{
+	local cur prev OPTS
+	COMPREPLY=()
+	cur=\"\${COMP_WORDS[COMP_CWORD]}\"
+	prev=\"\${COMP_WORDS[COMP_CWORD-1]}\"
+	case \$prev in
+		'-f'|'-t'|'-s'|'-c'|'-h'|'-q')
+			return 0
+			;;
+	esac
+	case \$cur in
+		-*)
+			OPTS=\"
+				--fingerprint
+				--timestamp
+				--strict
+				--ignore-missing
+				--no-exceptions
+				--no-cert-exceptions
+				--no-local
+				--colour
+				--help
+				--version
+				--quiet
+			\"
+			COMPREPLY=( \$(compgen -W \"\${OPTS[*]}\" -- \$cur) )
+			return 0
+			;;
+	esac
+	COMPREPLY=( \$(compgen -f -- \$cur) )
+	return 0
+}
+complete -F _sigchk_module sigchk"
+if [ -d "${bash_dir}" ]; then
+	echo "${module}" > "${1}"
+	if [ -s "${1}" ]; then
+		return 0
+	else
+		return 1
+	fi
+else
+	return 1
+fi
+}
+
+main() {
+target="${0%"/"*}/"
+if ! [ -d "${target:-""}" ]; then
+	target=""
+fi
+target="${target}sigchk"
+if ! [ -e "${target}" ]; then
+	echo "${0##*"/"}: sigchk: Is not found" 1>&2
+	exit 1
+fi
+case "${UID:-"1000"}" in
+	0)
+		echo "${0##*"/"}: access level: root" 1>&2
+		app_dir="/usr/local/bin"
+		if [ -e "/etc/bash_completion" ]; then
+			bash_dir="/usr/share/bash-completion/completions"
+		fi
+	;;
+	*)
+		echo "${0##*"/"}: access level: user" 1>&2
+		app_dir="${HOME:-"/home/${USER}"}/.local/bin"
+		if ! [ -d "${app_dir}" ]; then
+			if ! mkdir -p -- "${app_dir}" 2>/dev/null; then
+				echo "${0##*"/"}: sigchk: FAILED" 1>&2
+				code=1
+				return 1
+			fi			
+		fi
+		if [ -e "/etc/bash_completion" ]; then
+			bash_dir="${HOME:-"/home/${USER}"}/.local/share/bash-completion/completions"
+			if ! [ -d "${bash_dir}" ]; then
+				if ! mkdir -p -- "${bash_dir}" 2>/dev/null; then
+					echo "${0##*"/"}: bash-completion: FAILED" 1>&2
+					code=1
+					return 1
+				fi	
+			fi
+		fi
+	;;
+esac
+if [ -n "${bash_dir:-""}" ]; then
+	if [ "${target}" -nt "${bash_dir}/sigchk" ]; then
+		if set_completion "${bash_dir}/sigchk"; then
+			echo "${0##*"/"}: bash-completion: OK" 1>&2
+		else
+			echo "${0##*"/"}: bash-completion: FAILED" 1>&2
+			code=1
+			return 1
+		fi
+	elif ! [ -e "${bash_dir}/sigchk" ]; then
+		if set_completion "${bash_dir}/sigchk"; then
+			echo "${0##*"/"}: bash-completion: OK" 1>&2
+		else
+			echo "${0##*"/"}: bash-completion: FAILED" 1>&2
+			code=1
+			return 1
+		fi
+	else
+		echo "${0##*"/"}: bash-completion: Is already installed" 1>&2
+	fi
+fi		
+if [ -n "${app_dir:-""}" ]; then
+	if [ "${target}" -nt "${app_dir}/sigchk" ]; then
+		:
+	elif ! [ -e "${app_dir}/sigchk" ]; then
+		:
+	else
+		echo "${0##*"/"}: sigchk: Is already installed" 1>&2
+		return 0
+	fi
+	if [ -f "${target}" ]; then
+		if cp -- "${target}" "${app_dir}/sigchk" 2>/dev/null; then
+			if ! chmod +x -- "${app_dir}/sigchk" 2>/dev/null; then
+				code=1
+				return 1
+			fi
+		else
+			code=1
+			return 1
+		fi
+	else
+		echo "${0##*"/"}: sigchk: Is not found" 1>&2
+		code=1
+		return 1
+	fi
+fi
+case "${code:-"0"}" in
+	0)
+		echo "${0##*"/"}: sigchk: OK"
+	;;
+	*)
+		echo "${0##*"/"}: sigchk: FAILED"
+	;;
+esac
+}
+
+main
+exit "${code:-"0"}"

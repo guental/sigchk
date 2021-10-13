@@ -1,0 +1,66 @@
+#!/bin/sh
+
+set -u
+
+main() {
+case "${UID:-"1000"}" in
+	0)
+		echo "${0##*"/"}: access level: root" 1>&2
+		bin="/usr/local/bin/sigchk"
+		completion="/usr/share/bash-completion/completions/sigchk"
+	;;
+	*)
+		echo "${0##*"/"}: access level: user" 1>&2
+		bin="${HOME:-"/home/${USER}"}/.local/bin/sigchk"
+		completion="${HOME:-"/home/${USER}"}/.local/share/bash-completion/completions/sigchk"
+	;;
+esac
+bin_dir="${bin%%"/sigchk"}"
+completion_dir="${completion%%"/completions/sigchk"}"
+completion_subdir="${completion%%"/sigchk"}"
+if [ -e "${bin:-""}" ]; then
+	if ! rm -- "${bin}"; then
+		code=1
+	fi
+	case "${UID:-"1000"}" in
+		0)
+			:
+		;;
+		*)
+			rmdir -- "${bin_dir:-""}" 2>/dev/null
+		;;
+	esac
+	if [ -e "${completion:-""}" ]; then
+		if rm -- "${completion}" 2>/dev/null; then
+			echo "${0##*"/"}: bash-completion: OK" 1>&2
+		else
+			echo "${0##*"/"}: bash-completion: FAILED" 1>&2
+			code=1
+		fi
+		case "${UID:-"1000"}" in
+			0)
+				:
+			;;
+			*)
+				if rmdir -- "${completion_subdir:-""}" 2>/dev/null; then
+					rmdir -- "${completion_dir:-""}" 2>/dev/null
+				fi
+			;;
+		esac
+	fi
+else
+	echo "${0##*"/"}: sigchk: Is already uninstalled" 1>&2
+	exit 0
+fi
+case "${code:-"0"}" in
+	0)
+		echo "${0##*"/"}: sigchk: OK"
+	;;
+	*)
+		echo "${0##*"/"}: sigchk: FAILED"
+	;;
+esac
+}
+
+main
+exit "${code:-"0"}"
