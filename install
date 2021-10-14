@@ -10,7 +10,7 @@ module="_sigchk_module()
 	cur=\"\${COMP_WORDS[COMP_CWORD]}\"
 	prev=\"\${COMP_WORDS[COMP_CWORD-1]}\"
 	case \$prev in
-		'-f'|'-t'|'-s'|'-c'|'-h'|'-q')
+		'-h'|'--help'|'--version')
 			return 0
 			;;
 	esac
