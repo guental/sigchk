@@ -32,6 +32,10 @@ module="_sigchk_module()
 			COMPREPLY=( \$(compgen -W \"\${OPTS[*]}\" -- \$cur) )
 			return 0
 			;;
+		*)
+			_filedir @(7[zZ]|[aA][vV][iI]|[bB][iI][nN]|[eE][xX][eE]|[gG][zZ]|[jJ][pP][gG]|[mM][kK][vV]|[mM][pP]4|[pP][dD][fF]|[pP][nN][gG]|[rR][aA][rR]|[zZ][iI][pP])
+			return 0
+		;;
 	esac
 	COMPREPLY=( \$(compgen -f -- \$cur) )
 	return 0
