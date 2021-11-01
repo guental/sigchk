@@ -1,7 +1,7 @@
 #!/bin/sh
 {
-# 2cc0dd3212b463afe948c0a5540acd54
-# 97bc403c3a6c7bfd3a7577d473114ea6bb0758b9ad375745c64986e7fc7369a9f0368496edbb16e53a38345c5235321784e63a7ae6684dfa81e7b05a66c6fa0f
+# 356c0eccfe42034b1855129b431d70bb
+# f992bf6d5a8f2aa18713c4b04cbf1f11dac3e87addf4c5ab4e4dd883cea57d67c1f024c2dd84cf4149ce23dc471ab97ab9bd0b0d38fa6235853c376cb55636e3
 set -u
 
 necho() {
@@ -54,7 +54,7 @@ case "${count:-"0"}" in
 		return 0
 	;;
 	*)
-		printf -- '%s\n' "${name:-"${0##*"/"}"}: please install: ${*}"
+		printf -- '%s\n' "${name}: please install: ${*}"
 		exit 1	
 	;;
 esac
@@ -199,22 +199,12 @@ text="${text}
 	1)
 text="${text}
   -s, --strict-gog
-        verify GOG installer authenticity
-      --strict-no-gog
-        verify installer authenticity"
+        verify GOG installer authenticity"
 	;;
 esac
 text="${text}
       --ignore-missing
-        ignore missing installer BINs"
-case "${dev_mode:-"0"}" in
-	1)
-text="${text}
-      --no-gog
-        do not expect GOG installers"
-	;;
-esac
-text="${text}
+        ignore missing installer BINs
       --no-exceptions
         do not use built-in checksums
       --no-cert-exceptions
@@ -340,10 +330,6 @@ while getopts "cCfFvVtTpPdDsSxXhHqQ-:" OPT; do
 					is_gog=1
 					strict=1
 				;;
-				no-gog-strict|strict-no-gog)
-					is_gog=0
-					strict=1
-				;;
 				nl|NL|no-local)
 					no_local=1
 				;;
@@ -360,15 +346,11 @@ while getopts "cCfFvVtTpPdDsSxXhHqQ-:" OPT; do
 					bin_exceptions=0
 				;;
 				nce|NCE|no-cert|no-certificates|no-cert-exc|no-cert-except|no-cert-exceptions|no-cert-exceptions|no-certificate-exceptions)
-					cert_fingerprints=0
+					osslsigncode_certificate_fingerprints=0
 					strict=0
 				;;
 				gog)
 					is_gog=1
-					strict=0
-				;;
-				ng|NG|no-gog)
-					is_gog=0
 					strict=0
 				;;
 				x|X|xattrs)
@@ -378,7 +360,7 @@ while getopts "cCfFvVtTpPdDsSxXhHqQ-:" OPT; do
 					show_help
 				;;
 				version)
-					printf -- '%s\n' "${name:-"${0##*"/"}"} ${version:-"1.2.1"}"
+					printf -- '%s\n' "${name} ${version:-"1.2.5"}"
 					exit 0
 				;;
 				q|Q|quiet)
@@ -406,16 +388,9 @@ case "${colourize:-"0"}" in
 		unset "reset" "bold" "faint" "italic" "underline" "blink" "reverse" "conceal" "crossed_out" "black" "red" "green" "yellow" "blue" "magenta" "cyan" "white" "light_black" "light_red" "light_green" "light_yellow" "light_blue" "light_magenta" "light_cyan" "light_white"
 	;;
 esac
-bold_name="${bold:-""}${name:-"${0##*"/"}"}${reset:-""}"
+bold_name="${bold:-""}${name}${reset:-""}"
 green_ok="${green:-""}OK${reset:-""}"
 red_failed="${red:-""}FAILED${reset:-""}"
-if devchk; then
-	case "${is_gog:-"1"}"${no_excl:-"0"}"" in
-		10)
-			cert_fingerprints="${cert_fingerprints%%"54445bec02c40ddd95bf5a4ea910cbf59fed5398212600a61e976fd6e53262c771753cc94ad425915781b20a5f7ef406a91f16116e9d80f40fed2d5a7fc134e1  "*}"
-		;;
-	esac
-fi
 
 case "${#}" in
 	0)
@@ -490,6 +465,658 @@ case "${dev_mode:-"0"}" in
 		esac
 	;;
 esac
+}
+
+osslsigncode_echoerr() {
+echo "${1:-""}: ${2:-"UNKNOWN"}
+
+Failed" 1>&2
+osslsigncode_code=1
+return 1
+}
+
+osslsigncode_show_help() {
+echo "Usage: ${name:-"${0##*"/"}"}
+
+	[ --version | -v ]
+
+	extract-signature [ -in ] <infile> [ -out ] <outfile>
+
+	verify [ -in ] <infile>
+"
+}
+
+osslsigncode_extract_signature() {
+local "file_type" "file_size" "find_cert" "offset_1" "offset_2" "offset_3" "offset_4" "offset" "size_1" "size_2" "size_3" "size_4" "size" "full_size" "raw_signature" "cert_mark" "raw_signature_cut"
+file_type=$( xxd -l 4 -p -s 0 -- "${1}" 2>/dev/null )
+case "${file_type:-""}" in
+	"4d5a5000")
+		:
+	;;
+	*)
+		case "${1}" in
+			*?.[eE][xX][eE])
+				osslsigncode_echoerr "Corrupt PE file - found unknown magic" "${1}"
+				return 1
+			;;
+			*)
+				osslsigncode_echoerr "Unexpected file type" "${1}"
+				return 1
+			;;
+		esac
+	;;
+esac
+file_size=$( stat --printf='%s' -- "${1}" 2>/dev/null )
+case "${file_size:-""}" in
+	0|"")
+		osslsigncode_echoerr "Can not get file size" "${1}"
+		return 1
+	;;
+esac
+if [ "${file_size:-"0"}" -lt 252 ]; then
+	osslsigncode_echoerr "Corrupt DOS file - too short" "${1}"
+	return 1
+elif [ "${file_size:-"0"}" -le 406 ]; then
+	osslsigncode_echoerr "Can not handle PE files without certificate table resource" "${1}"
+	return 1
+fi
+
+find_cert=$( xxd -l 8 -p -s 408 -- "${1}" 2>/dev/null )
+case "${find_cert:-"0000000000000000"}" in
+	0000000000000000|00000000*|*00000000)
+		osslsigncode_echoerr "PE file does not have any signature" "${1}"
+		return 1
+	;;
+esac
+
+
+offset_1=$( echo "${find_cert}" | cut -c 1-2 )
+offset_2=$( echo "${find_cert}" | cut -c 3-4 )
+offset_3=$( echo "${find_cert}" | cut -c 5-6 )
+offset_4=$( echo "${find_cert}" | cut -c 7-8 )
+offset_4="${offset_4##"00"}"
+offset="${offset_4:-""}${offset_3:-""}${offset_2:-""}${offset_1:-""}"
+offset=$( printf -- '%d\n' "0x${offset}" )
+if [ "${file_size:-"252"}" -lt "${offset:-"406"}" ]; then
+	osslsigncode_echoerr "Corrupt PE file - too short" "${1}"
+	return 1
+fi
+
+
+size_1=$( echo "${find_cert}" | cut -c 9-10 )
+size_2=$( echo "${find_cert}" | cut -c 11-12 )
+size_3=$( echo "${find_cert}" | cut -c 13-14 )
+size_4=$( echo "${find_cert}" | cut -c 15-16 )
+size_1="${size_1#"00"}"
+size_2="${size_2#"00"}"
+size_3="${size_3#"00"}"
+size_4="${size_4#"00"}"
+size="${size_4:-""}${size_3:-""}${size_2:-""}${size_1:-""}"
+cert_mark="${size_1:-""}${size_2:-""}${size_3:-""}${size_4:-""}"
+size=$( printf -- '%d\n' "0x${size}" )
+osslsigncode_signature_size="${size}"
+case "${#cert_mark}" in
+	0)
+		osslsigncode_echoerr "Can not extract PE file signature size" "${1}"
+		return 1
+	;;
+	2)
+		cert_mark="${cert_mark}000000"
+	;;
+	4)
+		cert_mark="${cert_mark}0000"
+	;;
+	6)
+		cert_mark="${cert_mark}00"
+	;;
+	8)
+		:
+	;;
+	*)
+		osslsigncode_echoerr "Corrupt PE file signature - size is incorrect" "${1}"
+		return 1
+	;;
+esac
+cert_mark="${cert_mark}000202003082"
+full_size=$((offset + size ))
+if ! [ "${file_size}" = "${full_size:-"406"}" ]; then
+	osslsigncode_echoerr "Corrupt PE file - current signature not at end of file" "${1}"
+	return 1
+else
+	unset "full_size"
+fi
+size=$(( size ))
+raw_signature=$( xxd -c 256 -l "${size}" -p -s "${offset}" -- "${1}" )
+case "${raw_signature}" in
+	"${cert_mark}"*)
+		case "${2:-"PEM"}" in
+			"DER")
+				osslsigncode_signature="${raw_signature}"
+			;;
+			*)
+				raw_signature="3082${raw_signature#"${cert_mark}"}"
+				unset "cert_mark"
+				raw_signature=$( echo "${raw_signature}" | xxd -p -r | base64 -w 64 )
+				osslsigncode_signature=$( echo "-----BEGIN PKCS7-----" "${raw_signature}" "-----END PKCS7-----" )
+			;;
+		esac
+	;;
+	*)
+		osslsigncode_echoerr "Failed to extract PKCS7 data" "${1}"
+		return 1
+	;;
+esac
+}
+
+osslsigncode_extract() {
+local "osslsigncode_signature"
+if osslsigncode_extract_signature "${1}" "DER"; then
+	echo "${osslsigncode_signature}" | xxd -p -r
+else
+	return 1
+fi
+}
+
+osslsigncode_verify_extract_checksum() {
+local "line" "pe_1" "pe_2" "pe_3" "pe_4"
+line=$( xxd -l 4 -p -s 344 -u -- "${1}" 2>/dev/null )
+case "${line:-""}" in
+	"")
+		osslsigncode_echoerr "Corrupt PE file - too short" "${1}"
+		return 1
+	;;
+esac
+pe_1=$( echo "${line}" | cut -c 1-2 )
+pe_2=$( echo "${line}" | cut -c 3-4 )
+pe_3=$( echo "${line}" | cut -c 5-6 )
+pe_4=$( echo "${line}" | cut -c 7-8 )
+line="${pe_4}${pe_3}${pe_2}${pe_1}"
+
+
+osslsigncode_checksum="${line}"
+}
+
+osslsigncode_verify_checksum() {
+local "script" "line"
+script="#!/usr/bin/env python
+from __future__ import print_function
+import os, sys, struct
+sys.tracebacklimit = 0
+from io import DEFAULT_BUFFER_SIZE as DEFAULT
+read = False
+try:
+	with open(\"${1}\", 'rb') as openfile:			
+		skip = 344
+			
+		pe = 0
+		
+		while True:
+			DATA = openfile.read(DEFAULT)
+			left = len(DATA) % 4
+			max = len(DATA) + ((4-left) * ( left != 0 ))
+			if not DATA:
+					break
+	
+			for i in range( int(max / 4) ):
+				if read == False:
+					if i == int(skip / 4):
+						read = True
+						continue
+				if i+1 == (int(max / 4)) and left:
+					line = struct.unpack('I', DATA[i*4:]+ (b'\0' * (4-left)) )[0]
+				else:
+					line = struct.unpack('I', DATA[ i*4 : i*4+4 ])[0]
+				pe += line
+				if pe >= 2**32:
+					pe = (pe & 0xffffffff) + (pe >> 32)
+	
+		pe = (pe & 0xffff) + (pe >> 16)
+		pe = (pe) + (pe >> 16)
+		pe = pe & 0xffff
+	
+		pe = pe + os.path.getsize(\"${1}\")
+		print('%08X' % (pe & 0xffffffff ))
+except KeyboardInterrupt:
+	try:
+		sys.stdout.close()
+	except:
+		pass
+	try:
+		sys.stderr.close()
+	except:
+		pass
+	print ('')
+	sys.exit(130)"
+echo "Current PE checksum   : ${2}"
+line=$( echo "${script}" | python )
+case "${2}" in
+	"${line}")
+		echo "Calculated PE checksum: ${line}" ""
+		osslsigncode_verify_checksum_state="ok"
+	;;
+	*)
+		echo "Calculated PE checksum: ${line} !MISMATCH" ""
+		osslsigncode_verify_checksum_state="failed"
+		osslsigncode_code=1
+		return 1
+	;;
+esac
+}
+
+osslsigncode_verify_signature_array() {
+echo "${1}" | openssl pkcs7 -inform PEM -print_certs -text -in /dev/stdin 2>/dev/null | while read -r "line"; do
+	case "${line}" in
+		"-----BEGIN CERTIFICATE-----")
+			num=$(( num + 1 ))
+			line_start=1
+		;;
+		"-----END CERTIFICATE-----")
+			echo "array_item_${num}=${line}"
+			unset "line_start"
+			continue
+		;;
+	esac
+	case "${line_start:-"0"}" in
+		1)
+			echo "array_item_${num}=${line}"
+			continue
+		;;
+	esac
+done
+}
+
+osslsigncode_verify_signature_strict() {
+local "line" "item" "num"
+num=0
+case "${strict:-"0"}" in
+	0)
+		return 0
+	;;
+esac
+case "${fingerprint:-"0"}" in
+	0)
+		for item in $( seq 1 "${orig_num}" ); do
+			line=$( echo "${2}" | grep -- "^array_item_${item}=" | grep -Ev -- "-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----" | sed "s/array_item_${item}=//g"  | base64 -d | sha512sum )
+			line="${line%%"  -"}"
+			if ! echo "${osslsigncode_certificate_fingerprints}" | grep "^${line}  " >/dev/null; then
+				return 1
+			fi
+		done
+	;;
+	*)
+		for item in $( seq 1 "${orig_num}" ); do
+			line=$( echo "${2}" | grep -- "^array_item_${item}=" | grep -Ev -- "-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----" | sed "s/array_item_${item}=//g"  | base64 -d | sha512sum )
+			line="${line%%"  -"}"
+			if ! echo "${osslsigncode_certificate_fingerprints}" | grep "^${line}  " >/dev/null; then
+				echo "${line}  ${1:-""}"
+			fi
+		done
+	;;
+esac
+}
+
+osslsigncode_verify_signature() (
+	
+	osslsigncode_verify_signature_clean_exit() {
+		case "${tmpdir:-""}" in
+			"")
+				:
+			;;
+			*)
+				rm -f -- "${tmpdir}/"[0-9]".pem"
+				rmdir -- "${tmpdir}/" 2>/dev/null
+			;;
+		esac
+		case "${1:-""}" in
+			130)
+				echo; return 130
+			;;
+			*)
+			return "${code:-"0"}"
+			;;
+		esac
+	}
+
+local "line" "line_start" "num" "array" "num_back" "num_base" "num_next" "orig_num" "tmpdir"	
+trap 'osslsigncode_verify_signature_clean_exit 130' INT
+trap 'osslsigncode_verify_signature_clean_exit' EXIT TERM QUIT
+if [ -d /dev/shm ]; then
+	tmpdir=$( mktemp -p "/dev/shm/" -d "osslsigncode-XXXXXXXXXXXX" 2>/dev/null )	
+else
+	case "${TMPDIR:-""}" in
+		"")
+			tmpdir=$( mktemp -p "/tmp/" -d "osslsigncode-XXXXXXXXXXXX" 2>/dev/null )	
+		;;
+		*)
+			if [ -d "${TMPDIR:-""}" ]; then
+				tmpdir=$( mktemp -p "${TMPDIR}/" -d "osslsigncode-XXXXXXXXXXXX" 2>/dev/null )	
+			else
+				tmpdir=$( mktemp -p "/tmp/" -d "osslsigncode-XXXXXXXXXXXX" 2>/dev/null )	
+			fi
+		;;
+	esac
+fi
+if ! [ -d "${tmpdir:-""}" ]; then
+	return 1
+fi
+num=0
+array=$( osslsigncode_verify_signature_array "${2}" )
+num=$( echo "${2}" | openssl pkcs7 -inform PEM -print_certs -text -in /dev/stdin 2>/dev/null | grep -c -- '-----BEGIN CERTIFICATE-----' )
+orig_num="${num}"
+for item in $( seq 1 "${num}" ); do
+	file_item="${item}"
+	case "${item}" in
+		1)
+			if ! echo "${array}" | grep -- "^array_item_${item}=" | sed "s/array_item_${item}=//g" | openssl asn1parse -inform PEM -in /dev/stdin | grep -m 1 -- ' :GOG' >/dev/null 2>&1; then
+				echo "${array}" | grep -- "^array_item_${item}=" | sed "s/array_item_${item}=//g" > "${tmpdir}/0.pem"
+				item_back=1
+				continue
+			fi
+		;;
+	esac
+	case "${item_back:-"0"}" in
+		1)
+			file_item=$(( item - 1 ))
+		;;
+	esac
+	echo "${array}" | grep -- "^array_item_${item}=" | sed "s/array_item_${item}=//g" > ${tmpdir}/"${file_item}.pem"
+	if ! [ -s "${tmpdir}/${file_item}.pem" ]; then
+		func_code=1
+		return 1
+	fi
+done
+case "${item_back:-"0"}" in
+	1)
+		num=$(( num - 1 ))
+		num_base=0
+	;;
+esac
+for item in $( seq "${num_base:-"1"}" "${num}" ); do
+	num_back=$(( num - 1 ))
+	case "${item}" in
+		0)
+			if [ -e "${tmpdir}/0.pem" ]; then
+				if ! openssl verify -untrusted "${tmpdir}/${num}.pem" -no_check_time -- "${tmpdir}/0.pem" >/dev/null 2>&1; then
+					func_code=1
+					return 1
+				fi
+			fi
+		;;
+		1)
+			if ! openssl verify -untrusted "${tmpdir}/2.pem" -no_check_time -- "${tmpdir}/1.pem" >/dev/null 2>&1; then
+				func_code=1
+				return 1
+			fi
+		;;
+		"${num}")
+			if ! openssl verify -untrusted "${tmpdir}/${num_back}.pem" -no_check_time -- "${tmpdir}/${num}.pem" >/dev/null 2>&1; then
+				func_code=1
+				return 1
+			fi
+		;;
+	esac
+done
+num_back=$(( num - 1 ))
+for item in $( seq 2 "${num_back}" ); do
+	num_next=$(( item + 1 ))
+	if ! openssl verify -untrusted "${tmpdir}/${num_next}.pem" -no_check_time -- "${tmpdir}/${item}.pem" >/dev/null 2>&1; then
+		func_code=1
+		return 1
+	fi
+done
+if [ -e "${tmpdir}/" ]; then
+	rm -f -- "${tmpdir}/"[0-9]".pem"
+	rmdir -- "${tmpdir}/" 2>/dev/null
+fi
+if ! osslsigncode_verify_signature_strict "${1}" "${array}"; then
+	osslsigncode_echoerr "Corrupt PE file signature - fingerprints do not match" "${1}"
+	func_code=1
+	return 1
+fi
+)
+
+osslsigncode_verify_extract_signature_checksum_line() {
+local "line" "type"
+echo "${1}" | openssl asn1parse -inform PEM -in /dev/stdin 2>/dev/null | while read -r "line"; do
+	case "${line}" in
+		*?[0-9]"5 prim: OBJECT"*":sha"?*)
+			continue
+		;;
+		*?"5 prim: OBJECT"*":sha"?*)
+			hash_type="${line##*":"}"
+		;;
+		*?[0-9]"20 prim: OCTET STRING"*"[HEX DUMP]:"?*)
+			continue
+		;;
+		*?"20 prim: OCTET STRING"*"[HEX DUMP]:"?*)
+			echo "${hash_type:-"UNKNOWN"}${t}${line##*"[HEX DUMP]:"}"
+			break
+		;;
+		*)
+			continue
+		;;
+	esac
+done
+}
+
+osslsigncode_verify_extract_signature_checksum() {
+local "osslsigncode_signature_line"
+osslsigncode_signature_line=$( osslsigncode_verify_extract_signature_checksum_line "${1}" )
+osslsigncode_signature_type=$( echo "${osslsigncode_signature_line%%"${t}"*}" | awk '{print toupper($0)}' )
+osslsigncode_signature_hash="${osslsigncode_signature_line##*"${t}"}"
+osslsigncode_algo_openssl="${osslsigncode_signature_line%%"${t}"*}"
+echo "Message digest algorithm  : ${osslsigncode_signature_type}" "Current message digest    : ${osslsigncode_signature_hash}"
+}
+
+osslsigncode_verify_signature_checksum() {
+local "line"
+if openssl dgst -"${osslsigncode_algo_openssl}" -- /dev/null >/dev/null 2>&1; then
+	line=$( { head -c 344 -- "${1}"; tail -c +349 -- "${1}" | head -c 60; tail -c +417 -- "${1}" | head -c -"${osslsigncode_signature_size}"; } | openssl dgst -"${osslsigncode_algo_openssl}" -- /dev/stdin )
+	line=$( echo "${line##*"= "}" | awk '{print toupper($0)}' )
+	case "${osslsigncode_signature_hash}" in
+		"${line}")
+			echo "Calculated message digest : ${line}" "" "Signature verification: ok" ""
+			osslsigncode_verify_signature_checksum_state="ok"
+		;;
+		*)
+			echo "Calculated message digest : ${line} !MISMATCH" "" "Signature verification: failed" ""
+			osslsigncode_verify_signature_checksum_state="failed"
+			return 1
+		;;
+	esac
+else
+	osslsigncode_echoerr "Can not calculate ${osslsigncode_signature_type} message digest algorithm:" "${1}"
+	return 1
+fi
+}
+
+osslsigncode_verify_show_signature_sed() {
+sed 's/^Subject: //; s/^Issuer: //; s/, C=/\/C=/g; s/, L=/\/L=/g; s/, O=/\/O=/g; s/, O=/\/O=/g; s/, CN=/\/CN=/g; s/, OU=/\/OU=/g'
+}
+
+osslsigncode_verify_show_signature_list() {
+local "line" "serial_line_found" "first_line" "cert_num"
+first_line=1
+cert_num=0
+echo "${1}" | openssl pkcs7 -inform PEM -print_certs -text -in /dev/stdin 2>/dev/null | while read -r "line"; do
+	case "${serial_line_found:-"0"}" in
+		1)
+			case "${line}" in
+				??:??:??:??:??:??:??:??:??:??:??:??:??:??:??:??)
+					line=$( echo "${line}" | sed 's/://g' )
+					serial_line=$( echo "${line}" | awk '{print toupper($0)}' )
+				;;
+			esac
+			serial_line_found=0
+		;;
+	esac
+	case "${line}" in
+		"Subject: "?*)
+			case "${first_line:-"0"}" in
+				0)
+					echo "${t}------------------"
+				;;
+			esac
+			line=$( echo "${line}" | osslsigncode_verify_show_signature_sed )
+			echo "${t}Cert #${cert_num:-"0"}:" "${t}${t}Subject: /${line:-""}" "${t}${t}Issuer : /${issuer_line}" "${t}${t}Serial : ${serial_line}"
+			first_line=0
+			cert_num=$(( cert_num + 1 ))
+		;;
+		"Issuer: "?*)
+			issuer_line=$( echo "${line}" | osslsigncode_verify_show_signature_sed )
+		;;
+		"Serial Number:")
+			serial_line_found=1
+		;;
+		*)
+			continue
+		;;
+	esac
+done
+echo
+}
+
+osslsigncode_verify_show_signature() {
+local "full_line" "full_num" "signer_line"
+full_line=$( osslsigncode_verify_show_signature_list "${1}" )
+full_num=$( echo "${full_line}" | grep -c -- "^${t}${t}Subject: " )
+signer_line=$( echo "Number of signers: 1" "${t}Signer #0:"; echo "${full_line}" | grep -Em 1 -A 2 -- "/O=GOG Sp. z o.o./CN=GOG Sp. z o.o.|/O=GOG Limited/CN=GOG Limited" )
+case "${signer_line:-""}" in
+	"")
+	;;
+	*)
+		echo "${signer_line}" ""
+	;;
+esac
+full_num="${full_num:-"?"}"
+echo "Number of certificates: ${full_num}" "${full_line}" ""
+}
+
+osslsigncode_verify() {
+local "osslsigncode_checksum" "osslsigncode_signature_line" "osslsigncode_signature_type" "osslsigncode_signature_hash" "osslsigncode_signature" "osslsigncode_algo_openssl" "osslsigncode_verify_checksum_state" "osslsigncode_verify_signature_checksum_state"
+if osslsigncode_extract_signature "${1}" "PEM"; then
+	if osslsigncode_verify_signature "${1}" "${osslsigncode_signature}"; then
+		if osslsigncode_verify_extract_checksum "${1}"; then
+			osslsigncode_verify_checksum "${1}" "${osslsigncode_checksum}"
+		else
+			return 1
+		fi
+		if osslsigncode_verify_extract_signature_checksum "${osslsigncode_signature}"; then
+			if ! osslsigncode_verify_signature_checksum "${1}"; then
+				osslsigncode_code=1
+			fi
+			osslsigncode_verify_show_signature "${osslsigncode_signature}"
+		else
+			osslsigncode_code=1
+			return 1
+		fi
+	else
+		osslsigncode_echoerr "Corrupt PE file - certificates do not self-verify"
+		osslsigncode_code=1
+		return 1
+	fi
+else
+	osslsigncode_echoerr "Failed to extract PKCS7 data" "${1}"
+	osslsigncode_code=1
+	return 1
+fi
+case "${osslsigncode_verify_checksum_state:-""},${osslsigncode_verify_signature_checksum_state:-""}" in
+	"ok,ok")
+		echo "Succeeded"
+	;;
+	*)
+		echo "Failed"
+		osslsigncode_code=1
+		return 255
+	;;
+esac
+}
+
+osslsigncode() {
+local "name" "r" "four_r" "osslsigncode_code"
+name="osslsigncode"
+n=$( printf -- '\n' )
+t=$( printf -- '\t' )
+r=$( printf -- '\r' )
+four_r="${r}${r}${r}${r}"
+case "${#}${r}${1:-""}${r}${2:-""}${r}${3:-""}${r}${4:-""}${r}${5:-""}" in
+	"0${r}${four_r}")
+		:
+	;;
+	"1${r}--version${four_r}"|"1${r}-v${four_r}"|"1${r}--v${four_r}")
+		echo "${name:-"${0##*"/"}"} ${version:-"1.7.1"}, using:"\
+		"${t}$( openssl version )"
+		return 0
+	;;
+	"5${r}extract-signature${r}-in${r}${3:-""}${r}-out${r}${5:-""}")
+		case "${3:-""}" in
+			"")
+				osslsigncode_show_help 1>&2
+				return 255
+			;;
+		esac
+		case "${5:-""}" in
+			"")
+				osslsigncode_show_help 1>&2
+				return 255
+			;;
+			*)
+				if [ -d "${3:-""}" ]; then
+					osslsigncode_echoerr "Is a directory" "${3}" 1>&2
+					return 255
+				elif ! [ -e "${3:-""}" ]; then
+					osslsigncode_echoerr "" "${3}" 1>&2
+					return 255
+				fi
+				case "${5:-""}" in
+					"/dev/stdout"|"/dev/stderr"|"/dev/null")
+						:
+					;;
+					*)
+						if [ -e "${5:-""}" ]; then
+							osslsigncode_echoerr "Is a file or directory" "${5}" 1>&2
+							return 255
+						fi
+					;;
+				esac
+			;;
+		esac
+		osslsigncode_extract "${3:-"/dev/null"}" > "${5:-"/dev/null"}"
+	;;
+	"3${r}verify${r}-in${r}${3:-""}${r}${r}")
+		case "${3:-""}" in
+			"")
+				osslsigncode_show_help 1>&2
+				return 255
+			;;
+		esac
+		case "${3:-""}" in
+			"")
+				osslsigncode_show_help 1>&2
+				return 255
+			;;
+			*)
+				if [ -d "${3:-""}" ]; then
+					osslsigncode_echoerr "Is a directory" "${3}" 1>&2
+					return 255
+				elif ! [ -e "${3:-""}" ]; then
+					osslsigncode_echoerr "Failed to open file" "${3}" 1>&2
+					return 255
+				fi
+			;;
+		esac
+		osslsigncode_verify "${3:-"/dev/null"}"
+	;;
+	"1${r}-h${four_r}"|"1${r}--h${four_r}"|"1${r}--help${four_r}")
+		osslsigncode_show_help
+		return 0
+	;;
+	*)
+		osslsigncode_show_help 1>&2
+		return 255
+	;;
+esac
+return "${osslsigncode_code:-"0"}"
 }
 
 fixstamp() {
@@ -1107,32 +1734,15 @@ esac
 }
 
 process_exe_state() {
-local "line" "start" "strict_update"
+local "line" "start"
 strict_full=""
 while read -r "line"; do
-	case "${strict:-"0"}" in
-			1)
-				case "${strict_update:-"1"}" in
-					1)
-						case "${line}" in
-							"Subject"*)
-								strict_full="${strict_full}${line##*": "}"
-							;;
-							"Issuer"*)
-									strict_full="${strict_full}${line##*": "}"
-									;;
-							"Serial"*)
-								strict_full="${strict_full}${line##*": "}"
-								continue
-							;;
-						esac
-					;;
-				esac
-		;;
-	esac
 	case "${line}" in
-		"Timestamp Verified by:"*)
-			strict_update=0
+		"Current PE checksum"*)
+			pe_old="${line##*": "}"
+		;;
+		"Calculated PE checksum"*)
+			pe_new="${line##*": "}"
 		;;
 		"Current message digest"*)
 			old="${line##*": "}"
@@ -1148,134 +1758,13 @@ while read -r "line"; do
 			return 1
 		;;
 	esac
-	case "${is_gog:-"1"}" in
-		0)
-			to="ok"
-			from="ok"
-		;;
-		1)
-			case "${to:-"0"}${from:-"0"}" in
-				00|01|10)
-					case "${line}" in
-						"Subject: "*"/O=GOG Sp. z o.o./"*|"Subject: "*"/O=GOG Limited/"*)
-							to="ok"
-						;;
-						"Issuer : "*"/O=DigiCert Inc/"*)
-							from="ok"
-						;;
-					esac
-				;;
-			esac
-		;;
-	esac
 done
-case "${strict:-"0"}" in
-	1)
-		strict_full=$( echo "${strict_full}" | sha512sum )
-		strict_full="${strict_full:-"UNKNOWN"}"
-		strict_full="${strict_full%%"  "*}"
-		if ! echo "${cert_fingerprints}" | grep -m 1 -- "^${strict_full}  " >/dev/null 2>&1; then
-			case "${old:-"none"}_${as:-"none"}_${to:-"none"}" in
-				"${new:-"none"}"_ok_ok|"${new:-"none"}"_ok_none)
-					echo "${strict_full}"
-					return 2
-				;;
-				*)
-					return 1
-				;;
-			esac
-			return 1
-		fi
-	;;
-esac
-case "${old:-"none"}_${as:-"none"}_${to:-"none"}" in
-	"${new:-"none"}"_ok_ok)
+case "${pe_old:-"old"}_${old:-"old"}_${as:-"none"}_${to:-"none"}" in
+	"${pe_new:-"new"}_${new:-"new"}"_ok_ok)
 		return 0
 	;;
 	*)
 		return 1
-	;;
-esac
-}
-
-
-detect_osslsigncode() {
-local "osslsigncode_ver"
-osslsigncode_ver=$( osslsigncode --version 2>/dev/null )
-osslsigncode_ver="${osslsigncode_ver%%$'\n'*}"
-osslsigncode_ver="${osslsigncode_ver%", using:"*}"
-osslsigncode_ver="${osslsigncode_ver#*"osslsigncode "}"
-case "${osslsigncode_ver:-""}" in
-	[0-1]"."?*|"2.0.0")
-		is_new_osslsigncode=0
-		return 1
-	;;
-	*)
-		is_new_osslsigncode=1
-		case "${osslsigncode_ver:-""}" in
-			"2.1.0")
-				untrusted="untrusted"
-			;;
-		esac
-		cert="/etc/ssl/certs/ca-certificates.crt"
-		if ! [ -e "${cert}" ]; then
-			echo "${0##*"/"}: ${cert##*"/"}: no certificate database found" 1>&2
-			exit 1
-		fi
-		osslsigncode_dtmp=$( mktemp -p "/tmp/" -d "${name:-"${0##*"/"}"}-XXXXXXXXXXXX" 2>/dev/null )
-		case "${osslsigncode_dtmp:-""}" in
-			"")
-				osslsigncode_dtmp="/tmp/${name:-"${0##*"/"}"}-000000000000"
-				if ! [ -e "${tmp}" ]; then
-					if ! mkdir -- "/tmp/${name:-"${0##*"/"}"}-000000000000"; then
-						echo "${0##*"/"}: ${osslsigncode_dtmp}: cannot make a temp directory" 1>&2
-						exit 1
-					fi
-				fi
-			;;
-		esac
-		if [ -d "${osslsigncode_dtmp:-""}" ]; then
-			trap 'process_tmp_clean 130' INT
-			trap 'process_tmp_clean' EXIT TERM QUIT
-		else
-			return 1
-		fi
-		return 0
-	;;
-esac
-}
-
-osslsigncode_extract() {
-local "tmp_exe"
-case "${is_new_osslsigncode:-"1"}" in
-	0)
-		if ! osslsigncode extract-signature -in "${1}" -out /dev/null >/dev/null 2>&1; then
-			return 1
-		fi
-	;;
-	*)
-		tmp_exe="${osslsigncode_dtmp:-"/tmp"}/${1##*"/"}"
-		if [ -f "${tmp_exe}" ]; then
-			if ! rm -- "${tmp_exe}"; then
-				echo "${name:-"${0##*"/"}"}: ${tmp_exe}: cannot remove temporary file" 1>&2
-				return 1
-			fi
-		fi
-		if ! osslsigncode extract-signature -in "${1}" -out "${tmp_exe}" >/dev/null 2>&1; then
-			return 1
-		fi
-	;;
-esac
-}
-
-osslsigncode_verify() {
-local "tmp_exe"
-case "${is_new_osslsigncode:-"1"}" in
-	0)
-		osslsigncode verify -in "${1}" 2>/dev/null
-	;;
-	*)
-		osslsigncode verify -CAfile "${cert}" -"${untrusted:-"TSA-CAfile"}" "${cert}" -in "${1}" 2>/dev/null
 	;;
 esac
 }
@@ -1291,43 +1780,34 @@ if process_xattr "${1}"; then
 		return 1
 	fi
 fi
-if osslsigncode_extract "${1}"; then
+if osslsigncode extract-signature -in "${1}" -out /dev/null >/dev/null 2>&1; then
 	case "${dry_run:-"0"}" in
 		1)
 			return 0
 		;;
 	esac
-	strict_full=$( osslsigncode_verify "${1}" | process_exe_state )
-	case "${?}" in
+	case "${fingerprint:-"0"}" in
 		0)
-			process_recovery_make "${1}"
-			process_xattr_make "${1}"
-			fixstamp "${1}"
-			if process_exe_warn_miss "${1}"; then
-				case "${fingerprint:-"0"}" in
-					0)
-						echo_colour "${1}: ${green_ok}"
-					;;
-				esac
+			if osslsigncode verify -in "${1}" >/dev/null 2>&1; then
+				process_recovery_make "${1}"
+				process_xattr_make "${1}"
+				fixstamp "${1}"
+				if process_exe_warn_miss "${1}"; then
+					echo_colour "${1}: ${green_ok}"
+				else
+					echo_colour "${1}: ${red_failed}"
+					code=1
+				fi
 			else
 				echo_colour "${1}: ${red_failed}"
 				code=1
 			fi
 		;;
-		1)		
-			echo_colour "${1}: ${red_failed}"
-			code=1
-		;;
-		2)
-			case "${fingerprint:-"0"}" in
-				1)
-					echo "${strict_full:-""}  ${1##*"/"}" 1>&2
-				;;
-				*)
-					echo_colour "${1}: ${red_failed}"
-				;;
-			esac
-			code=1
+		*)
+			local "osslsigncode_checksum" "osslsigncode_signature_line" "osslsigncode_signature_type" "osslsigncode_signature_hash" "osslsigncode_signature" "osslsigncode_algo_openssl" "osslsigncode_verify_checksum_state" "osslsigncode_verify_signature_checksum_state"
+			if osslsigncode_extract_signature "${1}" "PEM"; then
+				osslsigncode_verify_signature "${1}" "${osslsigncode_signature}"
+			fi
 		;;
 	esac
 else
@@ -1927,26 +2407,14 @@ fi
 
 process_tmp_clean() {
 case "${dtmp:-""}" in
-	"/tmp/${name:-"${0##*"/"}"}-"????????????)
-		if [ -d "${dtmp}" ]; then
-			rm -fr -- "${dtmp}"
-		fi
+	"/tmp/${name}-"????????????)
+		rm -fr -- "${dtmp}"
 	;;
 esac
-case "${osslsigncode_dtmp:-""}" in
-	"/tmp/${name:-"${0##*"/"}"}-"????????????)
-		if [ -d "${osslsigncode_dtmp}" ]; then
-			rm -fr -- "${osslsigncode_dtmp}"
-		fi
-	;;
-esac
-unset "dtmp" "osslsigncode_dtmp"
+unset "dtmp"
 case "${1:-"0"}" in
 	130)
 		exit 130
-	;;
-	*)
-		exit "${code:-"0"}"
 	;;
 esac
 }
@@ -1968,7 +2436,7 @@ if process_xattr "${1}"; then
 	fi
 fi
 dpath=$( realpath --no-symlinks -- "${1}" )
-dtmp=$( mktemp -p "/tmp/" -d "${name:-"${0##*"/"}"}-XXXXXXXXXXXX" 2>/dev/null )
+dtmp=$( mktemp -p "/tmp/" -d "${name}-XXXXXXXXXXXX" 2>/dev/null )
 if [ -d "${dtmp:-""}" ]; then
 	trap 'process_tmp_clean 130' INT
 else
@@ -2367,7 +2835,7 @@ if process_xattr "${1}"; then
 fi
 if type zip >/dev/null 2>&1; then
 	dpath=$( realpath --no-symlinks -- "${1}" )
-	dtmp=$( mktemp -p "/tmp/" -d "${name:-"${0##*"/"}"}-XXXXXXXXXXXX" 2>/dev/null )
+	dtmp=$( mktemp -p "/tmp/" -d "${name}-XXXXXXXXXXXX" 2>/dev/null )
 	if [ -d "${dtmp:-""}" ]; then
 		trap 'process_tmp_clean 130' INT
 	else
@@ -2558,12 +3026,11 @@ local "name"
 name="${0##*"/"}"
 selfcheck
 setdevmode
-hash_mark="user.${name:-"${0##*"/"}"}.hash"
-pkgchk "awk" "b2sum" "bzip2" "find" "grep" "gzip" "md5sum" "osslsigncode" "realpath" "sed" "stat" "tac" "unzip" "wc" "xz"
+hash_mark="user.${name}.hash"
+pkgchk "awk" "b2sum" "base64" "bzip2" "cut" "find" "grep" "gzip" "head" "md5sum" "python" "realpath" "sed" "stat" "tac" "tail" "unzip" "wc" "xxd" "xz"
 data_exceptions
 setcert
 set_colour
-detect_osslsigncode
 setopt "${@}"
 exit "${code:-"0"}"
 }
@@ -2669,35 +3136,28 @@ c15aad8d2e8d958c8744107fbc6bc995  setup_mafia_iii_1.090.0_(19569)-7.bin
 }
 
 setcert() {
-cert_fingerprints="\
-4954d9c3c3ff8d9ead4ed8feca4ea34f06fd2f3849581eaee597ca55249ddcb6e3908a739c64ca9bbc6a812fb78ba4105bb284b6707d1d4221aa474d0557c1cb  GOG Limited/setup_multiwinia_2.0.0.11.exe
-98bd1464bcce48b82306968478b085d9699ba05bd0cde3c8090e9ba304bd91ba57448df87cedd9518d147c762734f439c22d274e9f73f8d2ee0e980375433482  GOG Limited/setup_worms_forts_under_siege_2.0.0.9.exe
-0c83f46c64e3371a493c88219d9c6e9094183a11da7ef8d978c07ab9d25a0f944a3ae09415f85ddd384cbc56000b3126eb2e52f6d9098fd8638e0b68933e2dda  GOG Limited/setup_dnd_dragonshard_2.0.0.10.exe
-e0934604d6bfdfa30a2fa66922f129a74f788a11b2cfb0bbe16294afd77c58d4cf5ce2656ec328cfd71bfc1fa5005d01d9271d3c86ad7de33e67c24e19496764  GOG Limited/setup_shadow_warrior_complete_2.0.0.7.exe
-47644361f16dcb02635921739a7fd9bd550c783571fb0fc70006f5f58fc103de0668617f3225fa7403895943b5a4615160d981675073273e7087b9a1db2e5207  GOG Limited/setup_overlord_pack_2.0.1.10.exe
-29a8635ef232324cc4af6810db74e14d87a4bc75f0b67c15e3e0332e359b1eb5c6f60d5df891827a0752a4f02d7d9f0d347c4adcd8ea58b3c38fc350f1503f2e  GOG Limited/setup_space_empires_4_deluxe_2.0.0.7.exe
-488436496d89de918a33d5efa1d56f06e20ffb3b7f094e0a97b0caaf10680cc1fa5957b3b28f7ce17888340ab03eccd4cc56a4f5393fe6bc6adc3b532b6dd353  GOG Limited/setup_superfrog_2.0.0.7.exe
-76b890df3075ae4d1df271ca5556fe0e93592410ed4caa4dcf23938e787a3b690080842921ee8f19029e1a514f20cd67997bcadaa61e7f629ab8024a508d1f45  GOG Limited/setup_influx_2.0.0.5.exe
-5584a7d02923192e720d54ffc9f69deb32850b42b7c04a0d115edd9f2acbc30fb76524c2487ee1f130bc90b9572428bfa5772bb5290cc729f77534fe98a73cf4  GOG Limited/setup_alan_wake_american_nightmare_2.1.0.24.exe
-3bab33b9276c01f7fc9f77a39840c90134bbccbe1dc8dd0ccae9ced564f48879a4f2e82d9da9eb754713a6751cfc6965164b92926c49c313a1197d257729c6bc  GOG Limited/setup_demon_stone_2.0.1.10.exe
-31761b0b6434c1af8ff0a834bbf64032b111ada2dbdb125ccc8674036aa6568148ec31417260a17d30dcf57bce3fae8a1d6ec3eb337446fd09e842fa824ae2fd  GOG Limited/setup_badmojo_2.0.0.3.exe
-44a050028b6f71eb10ea72df3ee2473416dc9724862d9feb288235b7bfed8ef3d6ee651eb0013f6b40a15008701bf8863c86b922d9afdcc68837857e52570af3  GOG Limited/setup_entomorph_2.1.0.8.exe
-e5adc4c7aa7dca035a0d9d641ea77a79cb37c7ab1cb4e39e681cba869ea8e1adb2744084cf48107fdafd4394d6e8ec2d25e10d8da908fdfb0a1479031c6fa6bc  GOG Limited/setup_rocket_ranger_2.0.0.1.exe 
-0753a4656853f22bb1b04b8c4946466be254978f9740574c0cd4c0317b68052fa2d3276bd63bd676a4358ac877ebe9975dc8298beb1a338fad1797d43afe52b8  GOG Limited/setup_full_spectrum_warrior_2.1.0.7.exe
-254cfd3b2e881618243b4030982e27eceff0b3a443f9d099d3b63fa34245d511c6d5e63276600e19a90604c7ca192b296dbd4f9eec198926028def14d0a32684  GOG Limited/setup_revolt_2.1.0.5.exe
-052531b9cf17c6728d43bb405a657d81a216cf36b4e708bd1fc87df8c901d48de88eb2f81fbaea5e624aaf3e494a438287a6e4ef9604deae0f95749709448cd1  GOG Limited/setup_sw_rogue_squadron3d_2.0.0.3.exe
-78bd304669f32ef48443af403678fd91c7aaa3076c369f40dfdb57eee337cd9e9fb5c076bd17761180f1eab1f7ace2fc3f2d6bf3044ea42ead7311f37c6205f4  GOG Limited/setup_red_baron3d_2.1.0.24.exe
-c3400f5e4816a7b9d7efe51c601400f4bdb357d7ae1097f50e224096821eb6db72feabb360dc5984302836958b88234e5fc8506a581ef29271ab249c4747e6d4  GOG Limited/setup_caesar4_2.0.0.5.exe
-172881beb181466cf6ca9cdfddb5f0a69d2192fa3488c055f5a6a223f7c6cbe2479d90155a0fc162594d9d3965bdeef456b777e68b15dadd0c50435e8ddabd76  GOG Limited/setup_blazing_star_gog-3_(12081).exe
-5da6f9ad4d8d15e023e7f41981ac62446d9f59944ee5b17a809670e7cd42ad8f25884075e986269bed72a88aeae65c11ff648b8856dced42d1ce8889a342cf85  GOG Sp. z o.o./setup_bloodrayne_betrayal_gog-2_(16593).exe
-cc8dee5b2853375b49367dd9ed98ba186654d925873bbff3901f298df22f0fcd27e656570315b5bde583dc34248ecb4b299550a8cc533de67f90a104a7ad5b5e  GOG Sp. z o.o./setup_defcon_1.6_(20793).exe
-b4b6d8a358524ee601ed5ee95cc21f6e77ea432e9005fbb67def6e0722100d5b122578e495adbe47583dc9cea21273646eb30cf328bf85244f543f068cebc104  GOG Sp. z o.o./setup_lords_of_the_fallen_game_of_the_year_edition_1.0.0_(64bit)_(24706).exe
-2eab8693cb9d94d343f8ac74dafc7966e29136e27079c8440648aa193cf43745e3d3530c0b583c57887caec1c41dfd9874b1ff215c5fb5bdba2c6263c7d215fa  GOG Sp. z o.o./setup_six_ages_ride_like_the_wind_1.0.12-1_(35222).exe
-30e8bb9ab201f97b5b3e7c6158ad1aca2e589ff522bea275418474d42a78090d207abb5fa977609dcf106998758e7c05d5f327d553ffe57c4363f2d26b7505b7  GOG Sp. z o.o./setup_papers_please_1.2.72_(43909).exe
-ce46602dd8ec8959c1700074efad20e35303b5e8f292c755190c9f331675a9656fba7a37254f6a113d4291ad03060fa3a623beb4e31ef52ecc145e6eb87b61b5  GOG Sp. z o.o./setup_starlord_1.0_(6087).exe
-51befa890fe518d28cdae8a6c016f0209d7f123a31d929251536bf9a2c8fc2cd8a1fc8ef55a1c1d7d981ab4aa78366844365d90dfb5b4d15865c5cdd6b2a083e  GOG Sp. z o.o./setup_witchaven_ii_blood_vengeance_1.0_(47551).exe
-
-"
+osslsigncode_certificate_fingerprints="\
+b75170e5a3daf5eb94467c4a462f701e1f159d35ef8e2bb0c9c84d30dd9a821c90efaa168b247ab5052fbf74565b9c0db13a5876a8542ed169ffac27f5744b4e  setup_multiwinia_2.0.0.11.exe
+07382695dcdf4d3cb9fdfd503bba137372f2049d6e9a7070eb773481239920f9b1dafada65a47c47bfbef05dfd45d38d1fa4b0f4a9baa5c8b623140f37ea5692  setup_multiwinia_2.0.0.11.exe
+8025e8b81e6664b6cb104280017aea1c0b8c2acc6222aad6f8370f1929901c2feb3f1ec3f5530ff2b7f5ac1ee6e0035862ccc6579bbbd884bbb98767d4f27b00  setup_multiwinia_2.0.0.11.exe
+4dd2fd7e4d12713c23e68533b1dd7ab09892268d6297240ae271a88c2898ce1d5d1d70dc50ab588a3286e4ff78b427991040d4c74adec7edbbe938674bddfb86  setup_multiwinia_2.0.0.11.exe
+bbd1169132b631ad9f22efa6fa3f6bc173157042cd796a1ae00703a06aea7f82d80286cfc1300f66584e51e0c21187334bae9909f52614867e6f1ef28fafb17b  setup_worms_forts_under_siege_2.0.0.9.exe
+fc74f0b9a9293aeba5a12d52b37bd0e39cdbaa7707dd3aa05c8c6a03dfc4aa52894e0757d82776f210aae6373b7835435395c03068eb38047aa311f2c80255dc  setup_dnd_dragonshard_2.0.0.10.exe
+a207072181e5358a75f569f9a2564dc9862a92aa002461181b2725513a8aa17d62f8acc5067ddea1effd78369fbf9894ecbd452a08b451b680e65dc1199a76dc  setup_overlord_pack_2.0.1.10.exe
+66a683958062f0dae58dc57be0cd84bf60ae1fecccb77e4b56b75c8fa72d3c2e3d24668250535f6fb1b7255065fdf66d1d368f7f3c7c16d0f824ff5f2ddcb191  setup_superfrog_2.0.0.7.exe
+8fc1d3e9c94617501eb523beeb19ece4ca9bf9c7f13e2767231632eee9a7300417f30b81d788e89eef2c9d7936cad326820b0d34ef2fb0dcb7465415a16bdda5  setup_alan_wake_american_nightmare_2.1.0.24.exe
+166e242c781a704e0e6c38ea0dd82f6a711f1ac97d51bad786f3ba97e73e1f41eba337a44b2d45af4cfb423f593e7b2262ca621f084ecc36f55b8c5f91e9257f  setup_badmojo_2.0.0.3.exe
+4a6ba7c24fc90b42e64d9764374fbb2f75c1649efcc28103da521840ebb062e4fa012ba07cea44713044367689e96521c6e0a9e23dbb30b74e1adacfe298cf0d  setup_rocket_ranger_2.0.0.1.exe
+3fb0757db00c4ec4ba0415a9ca717d68d0e8c7732bb5de08222cedc08ef66a4938895bb23cda0b2bd3a05f673a82896d26f0ad739bed9f601f59d7006fece633  setup_red_baron3d_2.1.0.24.exe
+cd45533e09fda9ec21a0515b79c06861e78ca4a5fd71e2c691136ed92d68e3e9bd405120db4aa3d65e3fa8504b8b22365d9e69d55530c1c9a87891bde1c7a7fa  setup_red_baron3d_2.1.0.24.exe
+9ae45ebac09f5cea3ad5f3373b5c060e1f4393bd1c372c30f4000c9ab87bb624b34e3218b7ad17ad042d124cab1f93dc16beefd4f05e6024e4524b929fcfa639  setup_caesar4_2.0.0.5.exe
+f16425846b3a84237c7cc676f992e6224fccc7b3087d7753d176e5b2ee4a8a06021f4bc06ffde601dc027adecce7f380a870534f780786821dba0fe2388f04f1  setup_blazing_star_gog-3_(12081).exe
+15ad11ebac0bf4c1550484b7197c6227c45d9a67d53163870af7490208822d6bb31db255df644feece00aee4eb7e0d0ba0418705d340e1fdb78228a15eabf0d7  setup_bloodrayne_betrayal_gog-2_(16593).exe
+5913daed93376b32bde82b1cc5342d6fc4490ddf9a58d64ae3009cb3819617ff4ad75b040f5b9d0f77e9663a54048dde703404ab7e869a5259efef393d5b4165  setup_monstrum_1.5.0_(64bit)_(24874).exe
+81d6dcf095d89a47d14918377f55b5de6142ac316f15bf5300bbff3131158efb0cd4ddbdb1156e3a8db94dc54df5f800bd76731ee2f9d751090f1f06a76624a4  setup_six_ages_ride_like_the_wind_1.0.12-1_(35222).exe
+1db4c73029020778c2c58e2cfa215b4e40c6f4ae80b32928048ee4590c438dcb8cfd1c1935793e136becb65aac58c0a753f6cb94d4e7c7a20a25f3ef4a619d19  setup_papers_please_1.2.72_(43909).exe
+89256a1eb4f19de9562ad8a9c32059bdf7b1e7bea35d39692b8ca4810cdf6801bd49db3b74019123cd9dda7a87cdfcb8e1193add9d06cdb1d850c874a279046e  setup_papers_please_1.2.72_(43909).exe
+17b1b5bb23113b956e9c6abde5966df02015bbec2155e671bc23b4cc0641a9e192eedf47db92c34dc8c9a5bd650fbd40cd8a2252bf4e9d10a858af7f976534e9  setup_starlord_1.0_(6087).exe"
 
 case "${dev_mode:-"0"}" in
 	1)
@@ -3029,301 +3489,6 @@ af3f497ecdd2b723b113a5d83bb653a943cdd8c0  youtube-dl.exe
 a048a6f148b914d44e77017017e4e8761faf5778  YUMI-2.0.6.9.exe
 f099126307a76bc2de3b199580ab597b02e11b2e  yuzu_install.exe
 dcdde5a9130b923c08550a033e6923e1a17f7248  0ad-0.0.23b-alpha-win32.exe
-
-"
-	
-	cert_fingerprints="${cert_fingerprints}
-54445bec02c40ddd95bf5a4ea910cbf59fed5398212600a61e976fd6e53262c771753cc94ad425915781b20a5f7ef406a91f16116e9d80f40fed2d5a7fc134e1  Kim Jensen/advanced_renamer_setup_3_85.exe
-2f2595b3c9ffcc296a86e262896e0b906afef4f67b21d58273bbfff9f1c97e4e1fc2944187db525a87658b796122074af02ff7a087fa89185dae51c22b713de2  IP Izmaylov Artem Andreevich/aimp_4.60.2169.exe
-eed195942c4e931f8babf5fc30b87985a86ee7a2b8675e34307d05de600ffe2041d11bb5d34ce361873eda6049053d66a7b1d348763dbc9ecc67327f445083c3  Advanced Micro Devices, Inc/win7-radeon-software-adrenalin-2020-edition-19.12.2-dec12.exe
-d792ce62e49626386c1c11bf822c731b61c8eeca9e7e8c14504fa83d2578fb89edc233ef130e65208089628df5fa5547c772757d53587a5b04575c7bf0a403b0  Advanced Micro Devices, Inc./radeon-software-adrenalin-2020-21.4.1-win7-64bit-apr19.exe
-fd4c7f11aa069c8801a847d243fbec5965bdf1cf4f5a63c71a72688491c12a5733a99cbb7019bb8570f42f6f6f830a0109ca2e37f5782f36314c9724491ee565  SplitmediaLabs Limited/XSplitVersion4.0.1910.2401.exe
-a7fa328cd8f6ef929fca5b4a8a9ad141e74b1643f91d65daeddc1309e398511ba506d66126dcc042183d50c1a61dc7999892fabf09697dec3307db5f8788826f  Google LLC/android-studio-ide-191.6010548-windows.exe
-60a9a9f2a615735fec850d1816c4d97b509c92fe448e01dd595fba0d608694eec045d11e57cc6aae6fed8074ec8b0eed90639f339e21bc2a0cb1966e1def6f44  Microsoft Corporation/adksetup.exe
-7b9ba79a5cb4078c2185d746d3a68c76ffc7f13914c12006e214aadd7c3f8b444fb7d2dd2345d7b6afacd5d2f24a90ec0783a33efc2ac20bac91bbca3798c5d5  ASUSTeK Computer Inc./APRP.msi
-a4145f0e1e433a577c75b227ea467c734706b738ee51ed68f9164a5ea18889497d1d301dc117628cf3adb91a4e4c8eb137dd41e5c94a95b90ffd8294cef5741c  ASUSTEK COMPUTER INC./AURA RGB Lighting Control for Graphic card & XG-STATION ver0.0.6.6.exe
-04eaa7bdf63562d4673ec7145ad5508c3115b2275fd7f6fb02c5c7fa6c0a15b991c4fc5f7f54e804aeb2cb3170d069d33d90a9a329dd74e5ca8157f55b8dbf7c  Advanced Micro Devices, Inc/RadeonSoftware.exe
-4b28b1c0897ea8a67a137e61287ef80ffd2b22515d6c0ec6109f3c3f179671ffe5d8c856dab94cd2b7a9f588869443038c21bf157af74d43d49ecadcd0c542b9  Advanced Micro Devices, Inc/AMDCleanupUtility.exe
-94989fff6497ed7ecd5f0d7331a5d5d5543bf9bef1574dd2bd85c98a27d75254f7e09f17b1055be5f8a99154dd902abf5a03ee5e1fab39c2c5060ab19e338910  GitHub, Inc./AtomSetup-x64.exe
-8a4b2415f861e2f29fc4c8f668bc307207dbb3f05c337a88a033d3f29d870f251dbac19892ceee2b21b007d38e0dd36c3a3c95d21296e93c1e5c937f39829373  James Crook/audacity-win-2.3.3.exe
-1eb154e88478a229cfb2f91967f50c6a77ccd581d2cc242e7a1c2aba89707ce9dc618405a993d49cceda2dbe9a54433672f1a2572f65845268db7431e0773447  AVAST Software s.r.o./avast_free_antivirus_setup_offline.exe
-bf1a7cbd889d978b86e0efb2276144874b03faae2b76496b66eed307fbe790fe6587af381f3e6c4ad1fcab0e0b6f9093e3688fc3ce736cbc204c389fb6b2718b  Blizzard Entertainment, Inc./Battle.net-Setup.exe
-b9e51b9eb1aa35255b04f4d580dbb55fa4b1467df2d24828e75bfabe710b624bda53bac8c15f9745cb55e77234f4463ab36db6641627cf4f2b2720a7f0bcda71  Zenimax Media Inc./BethesdaNetLauncher_Setup.exe
-ffc5e13e15bff397e1839295789a0da91a09839b4ec8e0fe46bb0f7eb27fe4d7e2c0d4c7bb887951aeee7017ace7c48021cb6b15da31e62f6e5dcc0ed90cd0d3  Bitcoin Core Code Signing Association/bitcoin-0.19.0.1-win64-setup.exe
-52784e2226811bbca3424e8cbe92d52d9525ba1ab150cf83fb36686dedbafddd3138f97db826dfa673276cfb81b634e59165725f7df6b4f1f22cfdb4a29593cf  Bitvise Limited/BvSshClient-Inst.exe
-4b05d2eb97619ad95e91ccdaef5b2e07c5a24a207661225a6ab8eeaa43840e2ad0ed0ff7833427605f06512079b4fea078dbbda55e4e3e7bd8e4313a02bf7d96  Stichting Blender Foundation/blender-2.81a-windows64.msi
-a198d5111a95827c85f62c1f9933eaf10cd94d7c442c2391e6375a24f68e3cc63fadf475a141c03064c8d6f4da6beeb6d3e77a0710c8f2a69d5ced59a0b11903  BlueStack Systems, Inc./BlueStacks-Installer_4.150.11.1001_amd64_native_be151160831b58741b40b0aaa3d3e20e.exe
-2d1788f83cd5ced32f4bd79428299c78cba43c1b37d6e72bc6fa0e1571fb9b93fba7ea44bb2e4700f5069d5de7a0616d52841d6c16f24ae24448eecd0bf7b1ee  Kovid Goyal/calibre-portable-installer-4.8.0.exe
-f07e0b9588e320f537cdf730cfa5bba2fbc2a9f6806134b8084da79922a722eec38ad6c80cfc05d4b421804d7f0d7f7c7ee6d43b81a1efcb14cff73163830e29  Kovid Goyal/calibre-4.8.0.msi
-385123dd90a8b1d8daa8b0ab0ac37086b83e0ed18dec6ea0fca07c6588c259aaedf817d1bf63145c6a61f6ecebc4cd0b1db48063e770b4d0c612223d2d2e0230  Google LLC/ChromeStandaloneSetup64.exe
-ea2236c8aea91b800e1f45df581b22c1847a893cffd8d7651ee2e42eb85e8ba4aa6659fc4e8c968ab2d2c9baab4a1fb436d4a67df674e4ad284ee9eeefdfdb15  Ivaylo Beltchev/ClassicShellSetup_4_3_1.exe
-33f3faf0b56afbef82372d8ef499c475a49aaa21239ea04c57390c17c4b1bd577878187d3764e0d347d7a949e28217f451bd8c6ca9d8da330879490765ab7817  Ivaylo Beltchev/ClassicShellUtility.exe
-5a3808355f62bf396d8213baa7deb68c09e38b934e23aff23868029457b63b5149fe6bca35bb8a3b40844d87766e1d9347a63ce205c12e338714bef17f5dc283  Comodo Security Solutions, Inc./ciscleanuptool_x64.exe
-be37577f8d8f2a3598d50b52d4ef740cf63a7ad4628fe39c66492cf5527fbf3d1db7c9258071b72c820f00f05be4c7a576bed51f9c1ddc89b6d6b2b551952f9b  Comodo Security Solutions/cispremium_only_installer.exe
-24d6c6627fc87885b0f9d050ae5d9ac3cb52864faf7beddac85e7fea558325d63b7b2e6fcfb7a73ebde3fe47c2f917e8470ba3807d211fd2e7ff08e3b266ec36  Comodo Security Solutions/cmd_fw_installer.exe
-414cdb112bc9ae0ceae20f408c7a7678c89eaf57a0a801be9aba6abc96678bc89e3a67a941c5729321e1deb06133aa42540f05c9678d9b417e9d080a3b27d95a  Ambiera e.U./CopperCube-6.3-Setup.exe
-6e726ee002ae0e05a98288a68416d65f616301010c3b93a60720fc101baa132c3bc6db5021cfbdc4c5b68f22ab09183914f638f109c99d188fa851aa66809ee4  Crytek GmbH/ce-launcher.exe
-74dcb6476413ee8383bebf9f275634cd1ecfef2c30e191b6cf4db78890298c2454cd5480617760c1ca07fea8264674f6137be0c2f55732983caaf8f4a836b331  Disc Soft Ltd/DTLite4491-0356.exe
-443b85b8c2cd934a21775ccbccddee5fb87a60b14b58a5abad1713a3734a9da81ef20e67219f541a0a2386b2595f6e42bd651cc31c866e5749cb0735847cd3d4  Sebastian Brands und Patrick Dubbert (Dexpot GbR)/dexpot_1614_r2439.exe
-9ecf07a7825f790ace25e64693e80b6e5a61a4aace98e99443248cf4d7f4206a9346ef95bc6ebd1e47f8199870c1f40af3728cd52aa2f54fdee33d6f6171cb3a  Discord Inc./DiscordSetup.exe
-98c85e42a7b6ff4c64374feb3b2f74321327a75e4810da26f039a81a07aba1d4311451f33428b49f4e8f226c6d6ff1f3a4425c21cd5cb532b2f75b627658b926  Open Source Developer, Pierre Bourdon/dolphin-x64-5.0.exe
-c12f0aa84b4fbad4b314c380374e36a61ef07ac79cea1a53fbbcd3b9306c9c63efb98d23c3801c6679a7e8378c9ffc3235426ecb791fbced9e39808e750a23e0  Dropbox, Inc/Dropbox 88.4.172 Offline Installer.exe
-4348cc5738b639dbdc7e2aaa45668241fd3bd10c3dc98ed107cfdb5af22b3748883a3dbd5de7e03df9b5407ab7f3bf1238b95c1013e8e25d2a11488d67d34789  Electrum Technologies GmbH/electrum-3.3.8.exe
-05505dacfdc4f1bd51892679036f4d84ae51058cb6715d4a0e0e480fd2cf525d713041fd88676dcf57b3c630a1af8b1644687ee17b47a63813897c8493892dd6  Vladimir Sergeevich Sukhov IP/enigmavb.exe
-0103f9b5d1aaf09841da19f6dfac6d8c5a07f1601963ba96485bfab01e8ef87f4fab253df3716e3e799ea341b53be83e11c04d28a3879b8fe9621e5462c669eb  Epic Games Inc./EpicGamesLauncherInstaller.msi
-26275c8b8a559b10ff2835a4f05797bd2e09282c0d31e5602c75bcea932508820151e6b9eafa58ec79e16e1aace8295d5e3e845bfecb8a8467e235e54ffec202  voidtools/Everything-1.4.1.935.x64.en-US-Setup.exe
-634279b2baa11eec103290885a753509dd00f74801e921b05ce6972fab7def64ab3ed57c451d026d66d225b40eb9cf70a5516e1e4199abe6b0d12f75ee5a3cdb  voidtools/Everything-1.4.1.935.x86.msi
-5fd6d1dcc79617278bbca65e9e27edd2fb4e54312cfa4a363ad63c97fa12a531cc7f0cb434d3b046f4d3cdb5bec134ab232234742c4290b970a0968e228675f1  Tim Kosse/FileZilla_3.46.3_win32-setup.exe
-be79a5abf1a46931af709ecbfa077624d36b443acc6079decae21d4ef171a24f0b85d42e01d8d8c8d76bee97ff8a1efa0d50357d3bfea6e4e16d2eca5bbe36d9  Tim Kosse/FileZilla_Server-0_9_60_2.exe
-4519b1cbcf7b29e2369094aababf6174a2a9371730df46d1c76e4d3b8571ef67620b4ca1b34e46401e6e5ce945141122b4dcb76199429ce869ed8eb906ab74fa  Mozilla Corporation/Firefox Setup 52.9.0esr.exe
-fb061e8f74c6a9006d95960a1ba5ec289dd5a712a4db8aceaa8af68e44f11c4f62884e122574e82dcd247c6633458a70ba28ab1c17fcf7fc40760e9956022576  Mozilla Corporation/Firefox Setup 68.3.0esr Win32.exe
-3b1fb8064df6347286fd1623fbfad643431bf4bf7b9540eaad239a329615b962928d050ebaa1ff2093fa73e872f66ab39e50cafc97c2766d5f0cbf1ee08fd8ff  Mozilla Corporation/Firefox Setup 68.3.0esr Win32.msi
-ff1cb0326a19ee7bd71a67da3a9ae56a135fa7a074bb05d371f39d56006fb37391a7c42f240d3113269fd6c48c362d2e75bd38b4d3b6f99ee3aed7df023f4b49  Adobe Inc./install_flash_player.exe
-df6ade82ffdd35e2d88a45967197b85e0e6d98113acb88cd9911ef9bab33422f75762952ec76660dd1ed100aea1201a3f7d7a668190f43803e92c6acb8bb477f  Beepa Pty Ltd/fraps/setup.exe
-bd50a0975bea2e27d34337be98212aab15d5ce8687ca9b98a63f9270117c6b36670ca40e598b1f507d78013da1c3d49ec97f0474dbd58ba483b9640c025de16c  Secure Plus d.o.o./freeFTPd.exe
-32b376bf29f7c3c7d5d16df3d2436cf94d3176c44f3022e87d4b8601d602a1add9a04c4c670ddab8743713672e40a8e9313ecd1d68b509dc35af8c59054b0e73  Freenet Project Inc/FreenetInstaller-1484.exe
-019fc6f60e91f9e4268612259ad7ec06e9086461cc778830a48bd0a1a4007fdbc94f0d36dbe02d299e4dd9078ec41294b472308c91f5910db236b203ac9f7af1  Enrico Tröger/geany-1.36_setup.exe
-d3bc0bce3762fb2e715c82a81644c7a68eb1f1478bbce01063a3f92f47b98730057da0134a5103c95a0f8f7eb9242d941536ac95edb33c80661acd3223e7645f  Realtek Semiconductor Corp./mb_driver_audio_realtek_8series/Setup.exe
-ab0755faeaead37d23fe103d9f1fa5935a0e0e78e305c5a7c63b72eaab67a8fd4089d438a7e6e2485824e3d0ac615e02329cc487f67c678b9fb3da4ca4c5e459  Andrea Electronics/mb_driver_audio_realtek_8series/AERTSr64.exe
-53f517c70f319224857d86a764565801def8679bd2ce10d235dbd68890193b09ccf9bb05ef5263064fc8763b9532147033d51d2b428c701ad6b5b4e23ec3e945  ASUSTeK Computer Inc./mb_driver_audio_realtek_8series/ATKEX_cmd.exe
-6727d8c8f3c9f70350a1a1c050acd4f49996976f68a860831d388100dc59ebdf7bd8e0bb145a688de2459f7de7afd0077eb195249eb944dfe5dc241e5a95ed51  Realtek Semiconductor Corp/mb_driver_audio_realtek_8series/CreateRtkToastLnk.exe
-bb5297f2ff05850b07e90c34d362656a6773dfc6fa3bacc80762f331b1fe1e303d3f023671e2413ef2859570af90d386a7a40f158651a3651cf5817f77bb0d1c  Conexant Systems, Inc./mb_driver_audio_realtek_8series/CXAPOAgent64.exe
-f14d782b31b075acea9126aaba6d3a65c04f4364de09c6bf3a080d0259644b4f18e066c8e775a73b8b2d8e8c8706e17c0d5b5547134dc0c2cf71cf02660d68b5  Realtek Semiconductor Corp/mb_driver_audio_realtek_8series/DTSAudioService64.exe
-be6a6ce365198bc7a01c1360276d293a935bcf8fe2004463efc5ac95e5983d7b848913139309857f4fd0cfabaa1af40d3c3fd4bd2a592cef7eca0d91b0ebd95e  DTS, Inc./mb_driver_audio_realtek_8series/DTSU2PAuSrv64.exe
-1004e13eb35691de103c2a6202971f1219d6183a8aadbc963dfca553b10db1ace70f728675892d519803bfe9cb53d6d060659f1c55e34334de6c9022a21b886a  Fortemedia Inc./mb_driver_audio_realtek_8series/FMAPP.exe
-140a56844a42dd161c55046f2b0029e71a9aebc2b8609636807c44d4f931391243efe4a73bbdbcfbc2179e1321b08144ad4b5b50062069d22b9e763c2b439665  Waves Inc/mb_driver_audio_realtek_8series/MaxxAudioMeters64.exe
-6727d8c8f3c9f70350a1a1c050acd4f49996976f68a860831d388100dc59ebdf7bd8e0bb145a688de2459f7de7afd0077eb195249eb944dfe5dc241e5a95ed51  Realtek Semiconductor Corp/mb_driver_audio_realtek_8series/RAVBg64.exe
-f14d782b31b075acea9126aaba6d3a65c04f4364de09c6bf3a080d0259644b4f18e066c8e775a73b8b2d8e8c8706e17c0d5b5547134dc0c2cf71cf02660d68b5  Realtek Semiconductor Corp/mb_driver_audio_realtek_8series/vncutil64.exe
-0e4764b5e7d020f8a6e287b369b38fb4ce7596fafd027c0f323be764c0c6d9cdb2e0b2c5c3ea1ffd293a3eb605b2914e02820ef1d893f14032cddd76e99d21f0  Intel Corporation/mb_driver_chipset_intel_8series/Setup.exe
-a5a3359473a2147fc9e994a7118016f82a065b9905de9f154e812d69381e04b8c53bbc81a988629c80b0986d69b52577c31351b57653ef04433f3dc4cc05001d  Intel Corporation - Software and Firmware Products/mb_driver_intel_usb3_8series/Setup.exe
-7da43ad6175ec969581007826807f16f316cda6501afc912049b26a0f873f356cdec0917dad44d7390650eab3a0503afab385c229b4e26427d810590165963b2  Realtek Semiconductor Corp/mb_driver_lan_realtek_8series_win7/AutoInst.exe
-87ec2b11b06caa09ffe3586e6b1a5104e40dbd93b189e2f69fe3b4d365a3e7a96d91d06e2f957a96a288c9d3dd9a6294fe666a88a4f9ccd190660ce30fef6aeb  Giga-Byte Technology/mb_driver_lan_realtek_8series_win7/CPSetup.exe
-fb61e16c2da2274aaa289ae0eabf435ec5f88770f07865e690e5f27f05b2a42aed5242a4b1c299c8036d125087f31bbd2608b47c3e123cbce1f78619df23886d  Realtek Semiconductor Corp/mb_driver_lan_realtek_8series_win7/setup.exe
-4378aca33fbc5c686f8ff553a4ab7721799c1edacdb7401cf934825ab4c75a613fbc36a29de3a4cad2c850b8c5cfad3ede24c146479d03b6a53cde7bbc8fbbb1  Jernej Simoncic/gimp-2.10.4-setup-2.exe
-91fdf43cf553fd50ce6bffdac34e6ef7e231ccafbdcaca8feb85df88e39dd1130d88e1321a44660b636015b6f77509f5abae095e263e37df6f21e597f6a24b8a  Jernej Simoncic/gimp-2.10.14-setup-1.exe
-3bfeaccfe1dcba96d5e101ee19c3ba3f5e394eb7613e9e778b176f22d65c2a4c205206fb9eb3d13d9f98a4377bdb7bbceb31aca9f77dcc3464307efd79b2594f  GitLab Inc./GitterSetup-4.1.0.exe
-45857062dc860d4bd36d566476a58af3c2d590721fd07908baec57097774a1890efb2e2d33f40c9a4b119b37392a072d95a8f4db653b39c5cff8d00006ee3b4c  Google LLC/GoogleDriveFSSetup.exe
-c281b37cbc5b3216748666253e97f8913d12675dacdaf123024900eb8cf29a7aaf5a6948d29fbcaff5f8dbff90a0d1e8592da88ba483feff4f70a94d37fa1176  Google LLC/gsync.msi
-da38010e2c1e1ff3bfef096a138aea9a34bbd0233b40eeca51d32b21dc64f89c51fe2f357ce70f812d949e28349f957c26d58a4085f6abf975feafcbd45e67f0  g10 Code GmbH/gnupg-w32-2.2.8_20180613.exe
-ae49e0f014eeac69863dbada936f49a5abbc17ccc9c1188c489d192cde8e6e555393685fe330e7d077283b6b56567b7e94b12e6ad54b8a6f10cb0941955a74fa  Intevation GmbH/gpg4win-3.1.11.exe
-b92fc59844b9727e790073e65441b50efbedaa44560414ef64a708b92af36749dd8aa7b8dea769c2aa04d127e8f5dc1a29586edb0c9235f70f36254311bdc28a  Intevation GmbH/gpg4win-light-2.3.4.exe
-abede0058bc4bfbdf93992663c9de19ec726485ea0389216f45e8ea2fb35a990f8dbebd3923c33316c97996e9e169db6c826271ede08f5aa4f7dd6af1f838690  Hermann Schinagl/HardLinkShellExt_win32.exe
-934fbb8397330879b765f0513cb6524ef260629f1d5cd6fa66319c28d7a64785f1739f7b9e993aff2022ef0d0663ef449212ad766d805b42996c9cd3698f8beb  Open Source Developer, Christopher Gurnee/HashCheckSetup-v2.4.0.exe
-b36c21e0b1607df0adf4194533eeaa063d9bc4f39a2cff602e2c6d59af4c78ca1231674e395946ee9dcddf423320e4184af01c29f38e958f13aa3a7ec5bbe824  Open Source Developer, Xavier Roche/httrack-3.49.2.exe
-22aeb234d026e2d4980109d238e96936e528c66eaa2cd0efd48fb659199d921840c1caf7155ff424c1b2ccae7b515bc3ad2092219029c34233a091bacf2807df  Open Source Developer, Zlatin Balevsky/i2pinstall_0.9.44_windows.exe
-c88fcac56c44beaa6a7219f84460557b9a7a546ee3a6ff073793bfa0f187e8beef587dbbb057ef5fa3491cb18bca6d40e7298360a8884e00cd832455fbbda166  Open Source Developer, Zlatin Balevsky/I2P-Profile-Installer-0.02a.exe
-903526e84c6574733a8d5e42415e86c77e90f5a9185811b4a0eb48d7dc3a53d432d3e489b2b1824730a6e6570640168e412213c292b3513413e16735f800e9b5  Rare Ideas, LLC/InkscapePortable_0.92.3.paf.exe
-073d964ddde0e7d015affe36d875ce91c44d1071251bb7de79dff9ca5ada2e180135d796aef9dd3604b7ec727a9b66b87cccab07670132cbde8774d8810cfa4e  Open Source Developer, Martijn Laan/innosetup-6.0.3.exe
-56474068deeb90bf29927ac1707e6b9aed6cf1bd1fea9f005f85d7a24ad5efb274096d50b0f6c7e1447b3711730f1590b430a851a8959d4325f684bfa0135948  Imperative Software Pty Ltd/InputDirector.v1.4.3.build129.Setup.exe
-e9f203915bf0a144d882e02f31c258853985c756dc7150996a932e790380bf1d6cb0358a032ed8e453d733b8690902657d8d41ae0f88a91114d7e62429a8539a  Inuvika Inc./Inuvika-OVD-2.6.0-ApplicationServer.exe
-fd8860d60d5ea7dbc54660cd8588d5db53a20e65dc627d9c9e4778cdb4430d98c2aaf96974272a7efcad07babdea3585192a2dd088a0398a959acf1115de0e1a  Artifex Software, Inc./gs926aw32.exe
-5c6ad5d09e2647885171ffe0b269518f2f1a1e8046715a78a82018932d7ca5417415c477a4fc5717f3901c116a232314e9e10e46ad8d45da78edf0e755b982a4  Irfan Skiljan/irfanview_shell_extension_plugin.exe
-e94815d4e8e3353b163c26a5508aaf4ded8d1b694f71a70001d93d773a8b849dd2c5e40fc6fcce7bfb5d100c517341d754c1779753e7010a2d5113675132c344  Irfan Skiljan/iview454_setup.exe
-520226258437c0510773e0b3d48d7fdde0d933335cefc905db6e9bf2fd3e18d1a3527988b6693259ab8f034da66a9dc25c63ef89351421c72320af879d1b4774  Oracle America, Inc./jre-7u80-windows-i586.exe
-19752392a480b1875d4d3a49e1520f127d62e815ac2465c424bbc785202db119beb5b441401f39ac27a111a4d61ee8fb5230d0152004a65448096572e4bb936d  Oracle America, Inc./jre-8u231-windows-i586.exe
-8a50aeb13dc2c9e462590a9a182d46c6afe7d958cba23944057f9523a7989f96876b20d48574c8a45c2d08f4aa83d2ee1507f34b7aef1eed37aa35d7e44aa5c0  Open Source Developer, Ingo Bauersachs/jitsi-2.10.5550-x64.exe
-301430c01d5142547a1f709a00d1b5e9ae16bf350cab210626d270c359db48ceb8dcaa4f27a200a9b0224bc087cad792d75d1aa44d3bb778eb472498f7244a27  Open Source Developer, Ingo Bauersachs/jitsi-2.10.5550-x64.msi
-c61ce303c9ab82dc8722aa44ac9ab3c626ba3cabd9ddf4275d14cb24015556c4d8fdbb495c54ee8252aa9ca75e289547542569e04840b1cf810dc458493da39e  Open Source Developer, Dominik Reichl/KeePass-1.37-Setup.exe
-fde7aa2968bb084a7c1df6c5d872fd81b7fdd912d287ff4d7f1674f3d3e1f2dc791e019f02579878407255228a0269b7aad530820f53816071703baed441d3f4  Open Source Developer, Dominik Reichl/KeePass-2.43-Setup.exe
-ae2663269bff64e902ab94ef0fde06f674c3f272b9b59c795ed4321ad55819aadc8089865f97930454d361fb4f195077ff6d39226d4215f135c005a28007721d  DroidMonkey Apps, LLC/KeePassXC-2.5.2-Win32.msi
-f217464f0a86a2032a67ae56dbce0981e57c4818c4cf98f5280824ce3fbc011a88dadc2457b245c5619590740acbabffa2c64219dec3a2a45ce6a8226f64a0e4  Association Kiwix/kiwix-hotspot-win32.exe
-e34f39d2bb41c22ece1ac84a0e0d3e84acd59728147a2763e9740031d3e8ea3bad29d2624fab621d243713c3a75917d2448ac9254e5831f80643f80973e55dd2  The Document Foundation/LibreOffice_6.2.8_Win_x86.msi
-0a1e1c5747392d0d32ba6740549aacfcf4ddc6bfc125ec7e39ce6bb473af3b5cb33f59f9be580334d2841dc4492a6610f0b9bdcdbfa79c2879cd61f7e1840929  Belledonne Communications/linphone-4.1.1-win32.exe
-3296d7a51c2a5ae845d1b4fe435b1d8110b35fbc8fe49da64fc41062e6649b32147333895f217fdd9b5614e28c54b75e3c5a93db1da6d9f6ccc049a6f519fd52  Logitech Inc/LGS_8.81.15_x64_Logitech.exe
-ed1682d1b9d7ce1b979960e584f7425971b1b9e5862f2386cc6d2e81fa9a0c32cc31e839b1a6bec00e89b61a48bc4b53ea3f2beb7aa1e16e5e13491ec86d4e24  Logitech Inc/LGS_9.00.42_x64_Logitech.exe
-2f9680ee7fd2907dcff2823f36764a6edf33b8771f085ffd5ef96e47e86abefc76dcc2daf03688f01b5784e5ab5880231c287b58e9d82bb6756c30fcf41b4651  Shanghai Microvirt Software Technology Co., Ltd./MEmu-Setup-7.0.9-ha538ce0a7.exe
-c896b2750c1a757809c73f0c9c7c99b53b6bdd30c776b7624ba004b979e4dcbb6c266f453f78bc3b4a398d28dc772646e1e9ee479c2c81da73d0470056c31206  Xamarin Inc./gtk-sharp-2.12.45.msi
-2d16ec65feb475d6df3effbfee1b97925080d94bb58327ce9fe6c80914419a6a11e0fdc95d457ef0b5bf1ee0fcbff3d283bbf11fa90aea39561fd759264cea53  Xamarin Inc./mono-6.6.0.161-gtksharp-2.12.45-win32-0.msi
-262d87490e06527718da1f2173c73e8fa7cf650295fe63368047599793d997b9c19ef9f99a7fe36c994ee65c71c42d7fa08e679c44b2eddebf8736689fb7876f  Xamarin Inc./mono-6.6.0.161-x64-0.msi
-502c1e0a190bdd50b85e8bb24356cb404af619ed44e9affde3c899ca6a6f41016f18ddf8d2e8e9bc780c7baf8c6474eafdce9fa9aaf16ccebfd9137f38fb6420  Microsoft Corporation/ApplicationCompatibilityToolkitSetup.exe
-85f02b0f7bf79a7b745d3b37e3708246f20caff88535c4532efc69a362e8c07e2ad2ed4be88b94cd709551ac479031c6238648d3e90b844067a1d20c5b543fdf  Microsoft Corporation/directx_aug2006_redist.exe
-cb91b716d748f627cdb2fa6c3e0896a416ff84480ff81765e1856b0a424fb6bbc0a817855206bebe95037d44355e46fd3fa602397dbbc79013b1e67e9dc9b2ac  Microsoft Corporation/directx_Jun2010_redist.exe
-64c759e4feed210097acde0e05a8f9dc2e21d3de5d0c11fdc4848dc37d6476f87b273b51c674153a1740e31c909d5464179662fe6a656e503e36d7f3e1b50b3f  Microsoft Corporation/MicrosoftCameraCodecPack-x64.msi
-13b9c92e2d1b571edf64c99ff1b94cff3dde0ed7f04c151b83779af3158f15be063c93fcdcd61d8b228dd31ceb828165bbafa1d77118e55f989274e0fbc2d806  Microsoft Corporation/gfwlivesetup.exe
-0d23c11dce741220c63ca079aa44588f05ca4c66447515742cfb2cf5145f743c18573225756a5faa48ba424f4bb562f9f277db3a789a167f74262496596fb786  Microsoft Corporation/dotNetFx40_Client_x86_x64.exe
-9157aaa6202bfa5baaddd59358e6ceca0bd90eb6489ddae716e267e52e8522943cc85baf5ba9a64b22113736a530ad8715900d00c230f83a6bffecea100ebc21  Microsoft LIVE Gaming for Windows/gfwlivesetup.exe
-d8bf789f453a1438f3f6da2fc51baa8f8e89dc390432054049254e33224b763be2c6df202f5be80149d93c20212b1a6c99ed89e29677467bcc43226c4b8c58e2  Microsoft Corporation/gfwlclient.msi
-005c6ccdbda44a8004f6bd44ec6e415a1856aa8dfd757592a1958fd81ad804d50f5eedaf05a4e9e4bae30a643973cae693ac8f1572f922ff410ada73faabcaac  Microsoft Corporation/wllogin_32.msi
-b6201466780b6408dd93ffba7dcabbb914b79ca732ac43b716c879d09880f3dcb5b98674b7512bd51e681cff41ba47c6f65425bab186298210d97f25576c83fd  Microsoft Corporation/xliveredist.msi
-e9812ada0be86c2826f5aa36d5b8ef6c2c00853584ecffcc72f2e994baf3ec652fe5b7395832bed52c881f25487d7fe4ca7f50bc73424e8c67083cb288b0d5e4  Microsoft Corporation/IE11-Windows6.1-x64-en-us.exe
-c1a6853e7c71b878759a4beb414850ca6db36de8b9c41f1aebba2018a252e1d83f5a00ce0ac6fbda9846ec04ea7f23c0bc5aba8b4cfff085a1cb1bbd26872b10  Microsoft Corporation/IE11-Windows6.1-x86-en-us.exe
-a0b29da62d4a81c9fbc108eaa0d1ed6aa80cc0ab268d18e79d397a4e88b45e95bbce3c11ab3e22773def5dbeeeab6b6b8b397803541dd665f21f62b90cc24dd1  Microsoft Corporation/dotnetfx35.exe
-282b69902ffd62541407f0b9de97ef90b926f66c38e005e6b33d05694e630fb73a3b1a0df449397fbc814384bd7dfdf008590fae3dba3901f35d9c4e775daf2b  Microsoft Corporation/dotNetFx40_Full_x86_x64.exe
-8da6bf270475d051f9fc560e57a9f5c5da40423334b0d6be511e3a563d0e25d7e19f9cfad913b0e2f9a3a8819d71a907621d942a2b7b706c35b39888f510c428  Microsoft Corporation/dotnetfx.exe
-0285d0a12287d10f4ea237b332dc158d84d750304175198221e386eda1799b96e1c24167c5348b28c35f0394fac5e819932de1f9c1efce2461a14a0e873ccefc  Microsoft Corporation/dotnetredist.exe
-ccd8d4024c1296df23033d912008e303b03a9b619aa4cdd8f0aac7e5560bc9660c26cf967d9c7b2d0a23b6800945cea107211dbe69b25ccf534be2c7bd7f7153  Microsoft Corporation/NDP1.0sp3-KB867461-X86-Enu.exe
-0cfed640ea684aa18308f6fe414fdd7ecd7fad8eabae1dad286b132eebd86a02f4503d9f1d6264d5fa49c7457652aed7b86855697870943176fbce00c5411172  Microsoft Corporation/NDP1.1sp1-KB953297-X86.exe
-98dae79b61176f80c258436a6700b88cd32a17a2b3f44e801119291d707043a9c7e9adea976fc56607b008cf9e284e2f71021de46fa9b3febbeeed94c475f2f7  Microsoft Corporation/NDP451-KB2858728-x86-x64-AllOS-ENU.exe
-404f338ccc62876a1f604f04d0e2e073c5d48ba4bba9d67d82d3608f554fbe1dd222c3f6fc2c77208464e179484ca2c1ee720db2a7a5ace451c17f8221e05dbd  Microsoft Corporation/NDP461-KB3102436-x86-x64-AllOS-ENU.exe
-7cf69ef14bed3393fb721d6a44798ed6cff3d5f4ea5a7e0ffb11986219dd233a80d7731d790e05022f98060183aa67beadb157ae6a0b057cb50c4d2c1fda709e  Microsoft Corporation/NDP472-KB4054530-x86-x64-AllOS-ENU.exe
-6145db594c15b8125f441a9e756dbbb1528631c39e501fea3890a7d0f63cbc38f78c34ca658c0538e34b6bac26ee6600d760a1758828e8dcce099a79912a7ffd  Microsoft Corporation/ndp48-x86-x64-allos-enu.exe
-fe8c0f01b40020ef2b6d18d4252c5d4c073536d890860fd0fce93cd94ec9482c38840fe0de9a0739614bbfa797f2ac32c0d19c65988a923b8d9de33864933480  Microsoft Corporation/scp.exe
-88e6164cfd410157d88894a60d15f86cffbc7bd473651c9280d4880f99b5d409ba493403891d8be49f1add84ef2f09770ef21ab4716baf1be510a8bd300fdd7f  Microsoft Corporation/sftp.exe
-7ec3f919140cb22c82c359128ed867fe3429b2bde23062c797d94e1d28143349dd03328e862c6e782d61456c6b567d9943b02dc915e67632dcab8c85ee5e33d0  Microsoft Corporation/scp.exe
-2aced376d030da05ce27fc692262aabf25361747ad29d61e0442f85e2ffa73675baeae55bd8a830b363c243fd521fe49f626d13df81f64be291f19e1fccc9ff7  Microsoft Corporation/sftp.exe
-ab50413c55039c5c997a9a62440e8fa9343c5941e0f6ceb9857fcfcd16f1f71d9b0b9ca5a0985caa19675a2f94fa8168690e00f2d025cb85982f65734aa871e2  Microsoft Corporation/sftp-server.exe
-4230cf6d9bbf49e77b9536b3de41184d813c5bbf6bbb7d5d3cd9f3a5af75fcc4177411bfa2da7dd7c75cc3fdff793ea65265ec5aaa966a928ee4d39a156c8367  Microsoft Corporation/ssh-agent.exe
-49e16b2180f2242f59d9fef03debbdd451d1d4a9088fc9314c20f367b81f83aa394dc6b80cb8647b0f9bab1d036e7d5a80fe168af4536470f1adc1c369f1e61e  Microsoft Corporation/sshd.exe
-6b8ba94aec42227d71a2b4653301c471a8d70d7950df93734dd534fa56d8a829e7a3e5885ed2a85c68d431498b080d5633ef37fe75231557ac955fa0dd9d7de9  Microsoft Corporation/ssh-keyscan.exe
-7fd9df8769e8fc3a485117482dc99cfead8483658feca46c9803ef51c31f47a30e9fcc3849991638a3cd195930bec2e201d66a1a649671d275d0eb78a15e2ba3  Microsoft Corporation/accesschk.exe
-85bf50ee982b08f96cbbfaebb31f0953543aaf3b5f14ae3ae7b48037be577fe167fce9326489543c9f0fdc72e9c7cb5c2cb6ca8bb0b48d65824c959dc679e735  Microsoft Corporation/ADExplorer.exe
-84386ea8b58ee3abeec5308199c982aab3f22becff62eba5f6cc06b3a795104a39c298df0cc8f5433b918c18406b62a0caf8cae798c35afc370d138009208735  Microsoft Corporation/ADInsight.exe
-185747d1421a84821078e0dff997b2bc5ebeb2b6111c762a45361c37e4e9603a81d5b0a6ee5c215b5f4697e63ebbe214c15d40bcd7f777687de854bf5ddcc24f  Microsoft Corporation/Autologon.exe
-4e2c8784c9ec723acb8d892ab28b1ebc604af8ea942b8d0e7dedcbef8024337c0532050a153c90a0b133d19aaf112793346002f92324198cc57e1820ab4830be  Microsoft Corporation/Autoruns64.exe
-da864cdd9940d181b11955d4461f74b0ba1c08e42792c103e59212efaca4c9bae638730ce19e0bf8f9443f4dfdac527ba3b5ca14876eb1c15097d17bc1adc510  Microsoft Corporation/autorunsc64.exe
-cf0cc80890d2e707f88e7a51e5c909181422fff7c5f47d72f77f5f070fa25c171124089743239a559f71961e4493b26efde87ed7022e803a99901555c0f17325  Microsoft Corporation/autorunsc.exe
-01bcc8fe3874f6dab0063a58c65a887779b9741f999f0679b9ee94461ca69fd46a2109561d69efa0ec85739c6fe9e756a9bc8b75fcae9b3670d3737c6675f68a  Microsoft Corporation/Clockres64.exe
-24eec77ab8530faaa0e583af5a2a8c93de6a821f3bbac8ca222afe4328db8fe47758878ea63004f3c1e3008b4f966fab29b5199893013994a78503dc0a9abc0a  Microsoft Corporation/Clockres.exe
-2dec2f44735c89374327f881420bcaa0cfc9e364c3256ca5e0bc1164c623c6945623b802d3499d57bc3fcf9d363f32f0a610dedb0e4f065ec5f21f43c457c191  Microsoft Corporation/Contig.exe
-de238262e716099ba2d8e8fb4fd33e0ab6956e5b05b8a0a3df1c58d4977946fb66f7e1bf9ccf1245d59c6b8931bdd6f616f7cb452bd027d9d90dbeeee1fa3aa8  Microsoft Corporation/Coreinfo.exe
-80feaf3a0e470b9b4b1b8ca19310149b4f7339b008570d149013ad0d7b0f46fba55a2ec1177c9e5590dda9ca612bbd56edaa7c332e98c10ad30888223f55c83b  Microsoft Corporation/CPUSTRES64.EXE
-b06668fe181d57082cd78f0896098db4456bef04205a100e8e0b7ad60e003998e3b9e85359115d166a5fe8aae0fbf86d2d0204eba07e552591cb8af68cb5f1d2  Microsoft Corporation/Dbgview.exe
-93ff17d2507a3ec24c5efdfaa4c84e1f4d21d38d467cc63184c6e861391d791c298cb65f58944b32ba40784509a9c6781d533c8e648e0c59d28aa3969bcdf8f3  Microsoft Corporation/disk2vhd.exe
-6b199b6e98c8ee613daa59665a821226989271cc9ba42650e90eb71b1b5ea2175fd06c25e32f1a0824c91fec64f65dda27a13aa487c49f1183ead28c2c39b7f7  Microsoft Corporation/diskext.exe
-95767f45d9d505060c4ee122874dbbc8163e8f66617181d294c3f7706795f1efc258664a1722868572e4b7c9f44d0a4195152c4e6d7e81307ce113eb7716e17a  Microsoft Corporation/du64.exe
-729f14a1b147584deb45edc1837f223c2610f4c2030518614a2bf42bf7f01b0c1460ed7cafb03653afb93f369931476353cdc7895eacf39f3eb8fd9dcf5bbd8d  Microsoft Corporation/du.exe
-e2b961cdc0eb29e3a0bfcc92cb614c65e98e163ce03f8c4e1d3ce649cb7be1ba35c53c688b40d222010fa30c85805f834322faa0a33ffb376bfd55c4ad8385b3  Microsoft Corporation/handle64.exe
-86e1586cbd334d8aef05f4f0ea5c6f6d24b47080a6dacb6b4a34855d95cfe90ef954c6d1a3554a5e69b54aa6b9836d01c4470f8c9c1c94fb6cd38ad2294b98d6  Microsoft Corporation/handle.exe
-6d80e22b41703ab3154525c4ff89b32e2a7cf2625c05b8740649ec747a81504d3bd3ec27097a11e7200097956e250dcffe2bc5f266cc5171863845cc2fe38b3c  Microsoft Corporation/junction64.exe
-83a8ca6b7cb6049e06add2ce0919ab2024b9ae94a60783f209ef40567b748d1882cc3045acc43253267d0ed3cdec079cbbb21f2218e9a4e15909928650fc0725  Microsoft Corporation/Listdlls64.exe
-f54fd2dc105263fc419d55e6492cecd50361c6dfb3211aaaa73b103ab0d6f30e2d28fc8906ecbfb2f25a00c2bd32b49cc074c0bb7af5001c4b92c4ad4972e612  Microsoft Corporation/livekd64.exe
-71d4c02a9a3e07f0cec28b59e3e360c50163de5f4a391b7ab06c66f85520b4d0c73d2e8c16d51f84bca5d3a2b39190e82ded753936e05119fefa12c3e1ccd610  Microsoft Corporation/logonsessions.exe
-e842d3964ffddc34560775568ecb1e349df478a5f87b7bcc350003b962ccfa650b9959ff16727b9c8e3b7853cdfa34b7ed2cb3c83660cadeb4858c9f5560d3c1  Microsoft Corporation/movefile64.exe
-dcc63df93a615b052289b05cb08900af998d720197166fc51e9ba6a0dfb59a9db3043b5b16b8bb56937f9e663afcdf66228a6f7d6c76988464144bb9b1062a35  Microsoft Corporation/notmyfault64.exe
-fd0508093c0313f9bf76bb6bb3bed6e0c0a2464b55cdd5217ed05b78fa11b9dba95255523b6939cd2cb62dfac09ca36cd40f46a5ff4119d269e75a721b587c96  Microsoft Corporation/notmyfaultc64.exe
-f6df1d581d76f4c81576119a7a209ebab617e2c1fd5466531fe2eed1033700098d7b670907b8c4767d2751a5319f26b38846997d1c781259e3759563527f09d6  Microsoft Corporation/notmyfaultc.exe
-670cfae2c356edd3af8c46dffc9fe5927f750345e2065b4a9e051ce5300faa01f0553a9d71a3c82c3dd0697c6e85eaafbc0dbb01995beb5d2c0d89ed9d0c7757  Microsoft Corporation/notmyfault.exe
-52d78121c78b20947b618b2ed46720e6b70bf51783d3f8f6227e09a952197e4f3ab83385921c5767627f68416afbe0802864a61d2c855a6150cbe8ec9feafc43  Microsoft Corporation/portmon.exe
-8ca6f4e63673466c68779738f744c4719187d41548dde5ff8032952374756574ea1e523b5aab89e85aa74a0b7422b971e487c51285555f7eafc5cbd9d859c15c  Microsoft Corporation/procdump64.exe
-4df5e7279776400094174671c4b5dcb112a08758799efb96ad6f2ce19ae81d28f95f11c342fb45003e2648e30dbd42da2487ec23191879c1bfc77e4f04500b8d  Microsoft Corporation/procdump.exe
-b0fc87c35be3325871cce7033e7a6c53fe1d4eeb7f29d33e4ad07e90d4e79a9014d4f917454c135ae16062e7caaba6da9f619928e0f298f570336bd8f2749828  Microsoft Corporation/PsGetsid.exe
-112f9e311591a21aee1ae817a4ebe085d2f093be86632580f16e895119850d39298b6c6c22037abc817e3490650c5eb07330159806db4d9f13c2bfa9a908d925  Microsoft Corporation/psloglist64.exe
-9bb7d77b733ce0c3cf38006fad9e3ab176e333b55fbe18530f425af0d58f707946b201e3549a8a6c4e56ab6b2e479cf0ee0a14655ca74a03a032ecad009ca17d  Microsoft Corporation/psloglist.exe
-81aab59c20ca7574b87df700c350ebd2401e6db6b3c1b079eb5033698fadf80152a629869c498b5c50bba5fe9b7f39f49dede175d8348206234506b7574a2b2e  Microsoft Corporation/RAMMap.exe
-daa9cac1538095395b8f5cadbfeaa8818773d23d629ac655d51b5d7bc48c1c93e5d8b5a9c6eb22efe97b1cc464121fdfccca0d503cb0c88d5be622af5c02c64a  Microsoft Corporation/regjump.exe
-c7c9e9db5af196557f9a258ac2bb8f5d5cc5da3c70cc4afa9eb1c82ba88ad588910796d98d8fdfb977d629c10a72324746fa90fc0490426e3881ffe288fed27c  Microsoft Corporation/sdelete64.exe
-84c9a519710e3ab10f0631fd57e0a9037adb2f2b018bda1b58a523b4c2862b186b52707b601c947af7bca4d4718174924cbbc79c57d98e2452a791abff996b2b  Microsoft Corporation/sdelete.exe
-7542f119b446daf6435345c7af68881eb1d7a42fe6f71b2f79a7fb3bb50ba7efd484516bb291891e2897bb476036fb9c4da9d9253ae17a2045d20e577e703544  Microsoft Corporation/ShellRunas.exe
-2ad2247be88c9bf86213da2bb4edfdadbacb5333212017139b41c3c8db072380492b5882d393b938d9297ae483ab3a96f6327fd164fcc4adfa3ab59d96916421  Microsoft Corporation/Tcpview.exe
-26fd16d8f490bfeba5ca90e0bf9285e06460f0098d6c74e57f9e8687c9ca960e6f565c5a11df145cb67e271f0e53b76f5bf33b29d4653942394ce4d76fe42b5f  Microsoft Corporation/Testlimit64.exe
-0301577145ea147e6e9c4223c2d78a4149e95c0f37bcc6af6a3e0be0c6fff486a22d843fc74a558ac60cf858390898f7c893acd8b6c3969f662d0971514674cf  Microsoft Corporation/Testlimit.exe
-1c1c9c0478866aadf3d0460aa64d6beca1576fb8bfe15f2d06fa2d4284a20eae6d452a29893c3d67d8986a4a13b3f2895c9a8053ad43353e5dd652c9b0046e47  Microsoft Corporation/Silverlight.exe
-0b4dce99b88fc815374f51126d421721de2744a699d87529313ee99e3348b0400e5e16564f4d19acbd5b1e400c45b3d292d10fb05f7ac0b126665a0d9afb4267  Microsoft Corporation/Silverlight_x64.exe
-f00674667acdbbeb26c05d031bfb97e97d34e62e948356fc8f6cac1b48fc65774e04899b850f2dd021b89e32fd381d5f6d0650d90e1e45693d9f6b9f1373b46f  Microsoft Corporation/vcredist_2005_x86.exe
-1e22c71dee3c0aec0a0a2040c9693088c3b8e2fb3e4c11dc4dc129d1b6065eacb3900bcbb0fd8d57d0e281bfa27a4a97ce4816cf2561fcdf13e2737d56920b7e  Microsoft Corporation/vcredist_2008_x64.exe
-1e26740245f0d4a9d4f068dab5efb04024a3ce8a41afb9f8383e8b86fce3b151039ad4f5164802efd835094009c6c46296e88e023b898cdf72410111d13ac83e  Microsoft Corporation/vcredist_2010_x86.exe
-df3bf5e03e80161b21123ef80977176e3d1f57ed546246f27074bf8048c9857e3f6e5a9a6a37dfe75532cc2ad7a35e4fd217a0454c0bde761e54cf4eed5c93c2  Microsoft Corporation/vcredist_2012_x64.exe
-df3bf5e03e80161b21123ef80977176e3d1f57ed546246f27074bf8048c9857e3f6e5a9a6a37dfe75532cc2ad7a35e4fd217a0454c0bde761e54cf4eed5c93c2  Microsoft Corporation/vcredist_2012_x86.exe
-b4f8009d65e7eb2e9c190bf5d7abfc422d6d4f63dd15c637cb600be311c613f18cc16a90927c205d84fffe70fc82dd557cb463e85fc1e5af4adca5b3336f24a8  Microsoft Corporation/vcredist_2013_x64.exe
-cd1f53335465293e00963b1266e35915fbfd757884f77e24bfb335adbc4f50ebef26fd0c92fd34181bbafe046a0eba784f0f19d2f02688b7f843ef5c0da06070  Microsoft Corporation/vcredist_2013_x86.exe
-0341253b5e3a5f8467d367891b6f8ce04ef73cec9be51b9a36575ab45e250362d9e7892821ba0de5797c1ec60f722c748a7f35130d45d24b194c8c5301071262  Microsoft Corporation/vcredist_2013_x86.exe
-8ad81ee93e14ac07ea9cd5ddb18e57c8e84eb71fcf68439a80c3e54edf2bfa66fe16c02a980c80812e90e3730d5e82ba05c1f7ca80f9ec1d203cef0a1736e3ee  Microsoft Corporation/vcredist_2015_x64.exe
-0f83de5c16d26d545bdedd8d5c61bb075f3ae239fea3d0d58c04cf48120881a1d7f4c69e55c67d7757d6e783534f3f920bcf369303e35179b3b509521710b504  Microsoft Corporation/vcredist_2015_x86.exe
-d33ceed87dec7c3c94a7b80962bb2c7f2d94b50b1ebb8f3eaaa5587410b42578c0af0b9b8aa3cddce1f6067abf91f842ba09384bba59752dde098811ed4377fa  Microsoft Corporation/vcredist_2017_x64.exe
-1b1a01b48afa7db4f5d5389a3b3279c43a1a8bf2f47d0053534520901ebc2867b40a080456f3056f1d476e68bf3207fb6e18ea4cb5b67f0d47fe50c67cf7aea4  Microsoft Corporation/vcredist_2017_x86.exe
-cf45743b7f0e73bb0c27c00f32a03f1fc1f12bbf1c7fae3fa0527689705545a11f76a409b1441cec35ef3c4361abb3ee38924699eb80db91d7604b14d4f09ccc  Microsoft Corporation/vcredist_2019_x64.exe
-269b02f5787b2ebe2bb8e95fb6bc6c90f03da06acbb39eba8c4b959ed21e7e19d787cd069a4b4931e3891052c63afdf70727a44170610273a3edc9020b311d20  Microsoft Corporation/vcredist_2019_x86.exe
-c95f4b20e05ffd6df65fd03054b6d1efde521e3ad9f349180a0f50446441f3e739e6c83c0068c73049fcc83cf0a376c82b62a761c5b164bd152d8fb325237a78  Microsoft Corporation/vcredist_2019_x64.exe
-34996f577a6d7aefc2ab5dc0c64a47b6b7967ad952e73c347d0bda0a7c24eb2c0d5fec986634563fc01812f4e79b23cb51ddf9857f3589c3f86b60d24b717c11  Microsoft Corporation/xnafx20_redist.msi
-2c12f8217ffbec99e048e1178c8ea215b649354d5cbacfa3e5d0847b68d4c17ff60f98a2fcb45e8ba5d531eda5e7ebc8064032bb007c041849af2e231d271909  Microsoft Corporation/xnafx40_redist.msi
-71f6ef48302f091340c1fc7fc235c82aca4e6b746ba7078229ea9ba081082fa3d9eabebca31f67086244bfc2b3a26ffb40451da78664cb37f165b323ad7db6a0  Mobatek/MobaXterm_installer_12.4.msi
-5db2424dfb3146df9b09f006d5ab462e197c49d64c6e98b2b839b6ea6a6c56168872afc68499b8bdd62982e729db8e60ea8dab42ac616bf1df2752ba83a75d73  Screaming Bee Inc/MorphVOXJunior_Install-1.exe
-807d106d7975888f3e0de28ff0098e1a18af6ee64c0b01a691e85f3ca1f2bd8aeacb89c92066b6f3b27ce0195d20dfdbb4c86d51c1de0e97426213ad75852edc  Screaming Bee Inc/MorphVOXPro4_Install-1.exe
-647146ae84af2c4530e99a55a5ce2731da17745adb2d3745fd9fa40f5dbc71b057c55dda7adcd5b3c967216d7a9ef90a685af593c43be8fa67c9494b590db7f3  Open Source Developer, Alexander Vodyannikov/MPC-BE.1.5.3.4488.x64.exe
-b55228fc73f772582f47be094fe7ba1afb011da1350d1948efb744ad9d352e9cb78da3732282734a8995f2ecf2c2d2628e7893297be8b3ebef7bd7e9fb2334c8  Fotis Zafiropoulos/MPC-HC.1.7.13.x64.exe
-0bafb10e588d2653762adb8528efec25891bb09015ffdbe9b4755b3cce2ebefa419395aa5980c97c62ac8a829adccf50d82e5afa90fd6d6dadd19fdfccad3f42  mkrautz.dk/mumble-1.3.0.msi
-3b51c777d9c51147e7e8fa335de8a85083114d519ae3fb2569cfe790180fbd636596b0447612cd6066ed1491f10c07070681ef7e17d5d90c36cf5d55fdbc2964  Nextcloud GmbH/Nextcloud-2.6.2-setup.exe
-4dc5f993ad35a93dd481488c705ed1df08208f66c155cb9a123b8681aff94d500a26a766a68332b02a6401f05a561e10d0d2af31c27f2681b916215932136dcf  NAVIMATICS LLC/winfsp-1.5.20002.msi
-cf8cab010504299ebb47b5f29a5d58ab70bf3be777e618f2623b804b1c9ed9252e349033456941c68c66fb856223212f10c6f9575fccd8c060475e8885371f1d  Notepad++/npp.7.8.2.Installer.exe
-3e885299b369eee852024d2ffb8f8cf341335235431f8f5d8d894733749ac5f0133713efd6ec83a9707445676257303b2078a5976c2ba1d45d72a6a152cf078e  Nox Limited/nox_setup_v6.6.0.0_full_intl.exe
-b70e8006276e26e1e11cb33a75838fcad3e90b8d6feb91a2eadb0897b9b849913bb7d403cce7e3de9a7edb726aa558a997b6c9b52ec4a57a74ebfdaecc142c67  Creative Labs Inc/oalinst.exe
-0c740504acc769259dcefa03f821b970a448868bb3baea4544982e31599816f05d358c239cbd88c314d5ae7b076f76dbea69aaaf24283f6d793f1b1a5908a95c  Open Source Developer, Hugh Bailey/OBS_0_659b_With_Browser_Installer.exe
-b79b69bc9db6d6a7d87f5b1db7759aae1d00c805449274a9cf886a4217d3ec5479206ec5db99afe891185716ecc647e865ba61dc8a31a9db08f9741fd05872c6  Hugh Bailey/OBS-Studio-24.0.3-Full-Installer-x64.exe
-7a31726de7e062e2b59924afde5ed595ae9fcded370b975ba3c57d73743a6c1e16cf20becc74f0781e904e7f29c17d6bba9aeb31c14dd06a02eca198b521620b  OpenShot Studios, LLC/OpenShot-v2.4.4-x86.exe
-564840ea7105ceaa7d3e288d36dac864323884dcb2b8d7d377a6ad5ad3e41a0a529362269415b514a02eb2e10a54b600d03c2608c735c274192ec88db615f7cd  OpenVPN Technologies, Inc./openvpn-install-2.3.15-I001-i686.exe
-15c75f9db9dd600ac1bb3c3eb6132131fc97e7a9bef5cbb4feee7564c29a3890a2b66870d4a97aacd38a5ad167923105594b8afe14b1e074c18f3689f50d2026  OpenVPN Inc./openvpn-install-2.4.8-I602-Win7.exe
-25f04b1bfca380b90d7674a2741f0c6716a1f51b7e0aabe243ceec56d986614e5f59d87ba38413dbccfd48e45722868abf633e27a10e325e6b02831b13002a63  Opera Software ASA/Opera_38.0.2220.29_Setup.exe
-c82bbc99ed98bc2d4b4446f54a1047a2805cefb2c9614878ab09c68ad82279c3b2f231da71b20ccc067127d138df466cbb88ed26368172a7f1e1f5865578edf7  Opera Software AS/Opera_54.0.2952.41_Setup.exe
-6a2387de3967abd570d8f5d827ee2c2bb7fe3aebf00bf7a188eb6c2a6896c8dc35e6ad07aefdc25c88e38a8d8e6a0c5f0b843e54aa8de432daf9891588d92ea1  Opera Software AS/Opera_65.0.3467.78_Setup.exe
-f1422b504dd0ae7cd6532a030d5756e068b2437741aa936c11a9212e16fe526d9a41d933e5030b00d489b6789386b1d6bbc9e2f7ddbf83eb4c1598622f0147d9  Electronic Arts, Inc./OriginSetup.exe
-abe705f8274033722eda7878c435d8a9276d4e4711b4f8ec0e0d1815004d7a8c219210175569a974069ca0aa6e85a2d167a853ea404ac66fb583a2a5a81b8074  ownCloud GmbH/ownCloud-2.6.0.13018.12690.msi
-6e32595e29031284284a617bdc09de2f1cd0bcbb12b91aef9c3f3005e797b00c5fc44c62d8304cff9884234e15cc8142b65b48376711fb1295f6e2894355aa63  DOTPDN LLC/paint.net.4.2.8.install.exe
-af0309dacfc5406c44aaa24253ad4ad39e1f7ff64155679978e8fc05963eb39ec38970f5f758c25a0bdb4b8bd55d998b49d703c57098089c7467fc20b7f3f312  NVIDIA Corporation/PhysX-9.19.0218-SystemSoftware.exe
-8f88e676beaec8bbc01d728d8e835ade66e2d6c654044a9d8ff87792e7d6612d46450165b6d7b864c993b9bc567697e2dfd7afd70ad0c4d10372916e28d08dd2  Eion Robb/pidgin-2.13.0.exe
-ad9dda7a95b1f6ae64bd0be6ef2e70a700df92c8bf48279463437ffd024c8ce6e3b282598a531ff00cf00cdedb9278af8697067e290a1c5421ee7f8966d93881  Piriform Software Ltd/ccsetup563.exe
-64a3e455b6b9a3c07b5a791fef86d6a2e90ae60d5c841a9dfbdd317ea8635905dde8345e624c3a89a226b2f5787bb8423145283f30e92a16b8c93b7e9afa5306  Piriform Ltd/dfsetup222.exe
-08478d1b27cdb664a464a659223941c9b67cb9deb66fa23ef62621a606adc2f0b80172126a0490ae0ef4bab7adf065b7ac3789b04b5661549108c3d9b1f25d79  Piriform Ltd/rcsetup153.exe
-c63dad0496ea409dff143247374fc8b369b2e53061d089fd155ffc3dcf044e09f40b676e67c13978bc152bf5c99f5148d9eef20c9bc820b19264c2b15be936ba  Plex, Inc./Plex-1.4.1.940-574c2fa7-x86_64.exe
-663246b7b27bcf0a921cb72e4d27cf863a48ad05bab4a42658c1b3791c2643e73d1f89929c933c2169ac863cf5d572447126c068f979c772a563718dd0ef4554  Václav Slavík/Poedit-2.2.4-setup.exe
-2b7e671d32efae6bf3dd21da5f8e69bc4092bd897e681cecf5071ea2f877e825cdc40207856775f7b958adc99db7e2f8df46ec756257750ea0d5d2d3057bba34  Luigi Stilo/PortUp.exe
-360258a66a0fbf59301eb916cf46692419ca734dcfcc0a3c59b3b8d95ea494bb724cfdaff50f10c9b87baf26cca9deb4ce06a844e548117652c9c66df5976570  Proton Technologies AG/Bridge-Installer.exe
-54354b195731df12d645b5e090c844e13c492975282f9f16ce7b831f4d9d7dfc1b23b48f203cd469b0ebe9b5798897bb95b785ba874d7c1fb0a72f87d5de2085  Simon Tatham/putty-0.73-installer.msi
-b6787c751105ef8a084275aa97e2cfe98f51e4c9dece479218326d02b1211d3478d884ffe29f0faa446cc6f1fe71c17878961809e3e818b81cae281f1b638cf6  Python Software Foundation/python-3.8.1.exe
-c09f189e03da6ea880e632d73c21247e7c7a53d466aedc68a109856f9e622c4110b882bf571b86821b487745a65a322f96cca32ca8bf798419884c26fb68e1a0  Python Software Foundation/python-2.7.11.msi
-ec8f3b503702839317b2298b433f9d1174533b99a4cafc688a5800bcfee647167e71612a75b5170ab8ac1b641b66c352a31c669398c55198ab511e6d61df78b4  Python Software Foundation/python-2.7.17.amd64.msi
-6998d9c03686aebe50e995d5b25ea9fec212b076280ea6129987ebaa6d7f25ac81bc6fd1d360c15c0497dce41ea48d2b0a27d13440a4f651b47e43d8af04ec5b  Nenad Hrg/Q-Dir_Installer_x64.exe
-afb87fdbb6188c55f4d686b6d0765220f941a84df180b7c2d7b366b3f03a8ab5e97b3c4a583406a7466056fab4f069e77141fd120f9ca7ed1056d7334c6b7ba8  Nenad Hrg/Q-Dir_Installer_x64.exe
-a3a2c0cbbf68702162c435c4387425a8f9bf91c3f332533e18d4dc210d59b95076ae35aee75e5e06e80b2ceed136dd840b70191a088dc95fa81aae90fcef5464  Stefan Weil/qemu-w32-setup-20190724.exe
-92963a12f56a369d242d0d10fcd8b64ec779eccaef632c24f934c69a7a1b3331f9928454c4359841616a23a91dcb444587016472011136338c6b589adbf52271  IP Kuzmitski DV/radioboss_setup.exe
-905b3416b3685ffd84e2e78b483a8e70ec75c672c22c8e7f96c10257b835641549fa1325aa2bd1dbb7f19970d61c9ec2d179f2aa0498b340583b16dd22b4ee07  Dmitri V Kuzmitski IP/RadioLogger_demo.exe
-d662d576ce2345ad673807077f054542e2e6386d6686c4212947dca581c9c65725b026d999380b1b1ebe64b42b785539f0daa58c46781d7699d1b52afa4221ae  New Vector Ltd/Riot Setup 1.5.6.exe
-26d69a607d15db0f3b7333bba9bdb1a03daa8c96ab54f1f5bd33dc45f32cc4bcea25217885b9fd9b2a170d738aa0a8581dc4ade632cc7cd386798db57294483c  Rocket.Chat Technologies Corp./rocketchat-setup-2.17.2.exe
-ec920d51c8dee1017caddbc250e93b95709ccd3ed1a8e502433fe2a6103b8f798469ee360699089a5de9b919018b06243ddf4515cec622e14e24ef0e62cbc6f7  Rockstar Games, Inc./Rockstar-Games-Launcher.exe
-848f1844a320ae145bd99493e6ba47939560b2697008a1aae290d0f0062247502dc6903194e7e045682b72cc48b5067bc3d080cddc86ad91c7cfaee2626804e9  Samsung Electronics Co., Ltd./Samsung_Magician_Setup_v4.5.exe
-a3bcea7866f3c9070b65d278d8097f16cf547d96c3eb6a36a11487aaa7351ce59d06c1d03b99270254d4e5af776ba3ab3d99e64764f71efb5e3faa4893afd372  Clonix Co.,Ltd/Samsung_Data_Migration_Setup.exe
-f1eec26b5acd177b8a0db954257dabd0b5bcc55a054466c7d7059a7f3fe088431eb72e8ad24252282684a0787b8c20bf41eace05576befffc0ceb7eb05e26931  Samsung Electronics Co., Ltd./Samsung_Magician_DC_Windows_32bit.exe
-15c260ae5bf285fb37d8848e3ad204ca02cbfe59c06cef193adc274b42f03d0428a000668bb7e0ca2ce08478f891c4e18a5bc5ad1dc2a6354ba9b480bc04e06f  Samsung Electronics Co., Ltd./Samsung_Magician_Installer.exe
-2b4535b60cbd0ca6a2ae0ac5894e0172bffe3dcba8792cdbb63a7bf146e3809452970af231f0920910abf0382bc135b18c1c6b35048df85a1b860fdab40ccb0d  Samsung Electronics CO., LTD./Samsung_NVM_Express_Driver_3.2.exe
-316ca6210c9740ff858e763c7ee7bae1d8ff219feb12245ee12850e46a804a0aed5043c51cb55958478e424f321d16a11a47f26a4006489a7fbad995feda2256  Samsung Electronics Co., Ltd./SamsungPortableSSD_Setup_Win.exe
-2b77dc6b925b37b86d8f19d724553219453a4691f3a76560b9991a6eae71548a0da349c3e1e4eb1fc0e014b4a6524f8dc7cb90ccecaa27ac500543b13e427de7  Samsung Electronics Co., Ltd./SMCA_Win_P00_RC04_20180402.exe
-d4c8fdb233703459cd47431b82115055c1724871a9415bfd6287f5b01e4114ca996a83fca5464a01375e5d82720810b70527f3f6620a20b2a749533881f1fcd7  Invincea, Inc./SandboxieInstall-533-1.exe
-2ccc34fa8da472fadd16e9b804e6ef93b413a0eae2d39086b41a7f6ea50032a3160d8b23c9dc12c6b14bd2e2e0b4baebb4f1698811f57eaeaadca5b89e6d1bbd  Cybergenic Corporation/esc_setup.exe
-e9462e3f32a626916086c3adc6e12856982569ec8a80f95a023da6a57218831fcf49443bb07c2e29a773b215513130f6844a0e748af429dc8a7b4df89c90e640  Christian Hermann/SimpleDNSCrypt.msi
-f6e5293e48df43258fe48443e0a4d7bf08c159723ac9d23a129d2b9755551004e99b32ff4c324d3accc832705d7ed5d6f565fa5ed2a20d39c68ee7000877cc94  Skype Software Sarl/Skype-8.55.0.141.exe
-3de8b70ededbbbc20195007d7b469945b4420485040feb872b2175ce80a4559af78af0ee400819bb92e6212a2bb227eb80341581f2f2a08fa6c7335893bc18a2  Slack Technologies, Inc./SlackSetup.exe
-64920932cd0adc2a60a443b1765941aaaad929876c4a208d0bfa45b239b14d632ef87ec6e142b83bb991688ddc265268ae57ca0f5416f52e4d6fafedda456412  Valve/SteamSetup.exe
-a3a349c80094e4a5be2809b28dd57d235f5db21b0beb389ba78dba27f09af75c204609d9599aadad0c8b5124ed8b9669a1e8eb064f4517ba1ea52fdf8cd27879  Krzysztof Kowalczyk/SumatraPDF-3.1.2-install.exe
-a6e868b778fa929cb75d5067853b13689094c4376ba07b4c9de81ea012a5f7b34779fad9be9ea4f882a3eb24c68b03d8d33b9572e9a694c027d1d508820f6eb9  PUYBARET EMMANUEL/SweetHome3D-6.2-windows.exe
-788adae78ce382d8f97a67e889db9b2b7bad6bda6fd2c2d1ac1dc223e8cef2e7d41adfcc05c94c1d7bbd0eabfc2b5cb9acd8179e32bede0daeb0df308406987b  Sync.com Inc./legacy-sync-installer.exe
-dfc65e59a5745277ca201e299a1f792a80ed6ba9eb6f167512296a8cb02e51d0b7414a031908fefe5bf4caa01fa29e94c12655b8ec128faea43239b6b625d36f  Sync.com Inc./sync-installer.exe
-27d989ea1f71265956b44b9a9d47ce6d28f2aaf106e84cdbcc6bf789f11bfd7431a9fe9e68e07d0979ad84552d9852358e1187a58cbe6a7afe2ebb248eb9eb62  canton7/SyncTrayzorSetup-x64.exe
-72aaf1aa6a381b95ca9e09549abdb573ff198dad829b218001df89192dc77aa1b38fea809c1de7a44c58f752ef1b1e19640f1e4d2f961ef496a317ac1d78f3af  Symless Ltd./synergy-v1.8.8-stable-Windows-x64.msi
-7b957ce62c064d06eb405b3f8994d7691fcf44a837b0b6703bf7d2dec99446af06a495b3e836ec2259f1808fc028987640f59664d805e9f44d9b965558211dad  TeamViewer GmbH/TeamViewer_Setup.exe
-df09fb16564e29decae056eb95c8224694a071018c015d61e78c3125580b50dd599558240ecbe59f7a588072d846914f6580487f5454f603594f4a75cdae65de  Telegram FZ-LLC/tsetup.1.9.3.exe
-b6bf2cbbd541f9ce8bd0661894b3f8899e8bfee50fec7df5a9fe27186906ea8032fde169b2c92f729fc8f67eecd926cb39c8757332ae180ce5dfffd0588f2e81  Code Sector/teracopy.exe
-e7f64ec201912190b42dace0d135034ff01ff6f1c9a3e728d4b02c86f663f4b3f3313ca2ee39cd26eae8ec9277e5d795270bbeca147e7f4f524e8c4a85da1dfc  Code Sector/teracopy.exe
-9d10d3baa811f8d85fd7645ab599ba1379357e0c5bb2ccf80d707bca42da9716f303d009d03a1cbc991a236e1a30793ff6bf4012a9b1dbfb339fe31d6c8090f5  Cybele Software Inc./Thinfinity_VirtualUI_v2_Setup_x64.exe
-37ec166535e440892875b5f26e187e7c8b352977c252588e68b6cbb3366bb59b215559a6832beff3f49e700356298e81173d90df2cc89dba52ff508c5086cf6f  Cendio Aktiebolag/tl-4.11.0-client-windows.exe
-d70fd3a365d12073caf5eef41af8d7b0410b2291d56c4a676e52a2a27ac4c391c7f6942b1a8696d2fd0db9066d070f10d1aeefdb150764dfe2452986e4e70ec0  Igloo systems Inc./Setup_TimeFreeze.exe
-552784912310ce1451e5bd40696be476e38257f54af447c7ef9bc074dc0f30aa52bd95246db23834a473be2df782757b7ef86b99e2b54a01fb939439e8266755  The Tor Project, Inc./torbrowser-install-win64-9.0.2_en-US.exe
-b10f561e124154ad6eefeaa51c4dae31340b2329732a92960e6bcd8eb6166bc1f9b5bf06fc0533593c578f46e0609aeeb5abd9ce8cba7057759825b48a9e2a66  Twitch Interactive, Inc./TwitchSetup.exe
-33edb818545cc57c4d2e061acf8a30f718330fd65fbbcf8709f9735159f5d088f78aa0c3354255c2ba9ec12d5b63ce904f103633e3dcee202ceb402634ed73e1  uvnc bvba/UltraVNC_1_2_21_X86_Setup.exe
-e526eed83baf7dbf82c44de9ed0b23ef937aefce4bc88896476652051a477090a0507834527795be693ba8afb5b505cc6090e4315d7a17f608f23790c292b5c1  Unity Technologies Aps/UnitySetup64-2019.2.17f1.exe
-1eac6508a8087da769cbbf7ff676f95eb026a988a88b7baa28a9b6b724b87013c58911af896c23c7a09edb8057ed369ed403fce0b338c57e3e6f39478ee60299  Unity Technologies SF/UnityWebPlayer.exe
-9cd45c7fec7fd155ec21c89737dfc3071967b0483cec5ab18893a00e6dcca096794e850200e89e9f3eef5299042ad9426f655b18b462157ea705f8b6b8e4d317  Unity Technologies ApS/UnityWebPlayer64.exe
-05b106395dab7eb70319b932bcea20889692140eed5305385cd1a9cab1fa16ad439c163508fc0821d1934a3bddbd30e9118790f595d15e52958dcaf856cceb2d  Ubisoft Entertainment Sweden AB/UplayInstaller.exe
-37b0d1d20b85d0e6105c2f43b383ce4e80b9c6954f6850341af5b7475362d52311562456c27068e164a3b0dda4fff7a7fa41a1eae0edb4eb47c7ae982abda5c7  IDRIX SARL/VeraCrypt Setup 1.24-Update2.exe
-9c158d705bfe586ef5e1d223bb215b75071e3d0e3c24b7fc2e4f3a92c32694c10f0c2b0dbf1322130294229b0f059008e6d9c084a3ca77bb6c92fc3cca49d2fc  Muzychenko Evgenii Viktorovich, IP/vac462.exe
-9132e9542beabee8cba8639316d20e86ef575f383d177a3ba150b1448b2e091a52a08bc79dbcd1bd49b8a421c79f729a5e343e9154386b9176d909a1d6f25a01  Elaborate Bytes AG/SetupVCD5500.exe
-6fafe5b0eeaf93a2c2759cc92aaaf9e37225d7fc5aa04892437966fed2b3033c5210e9f750a315bb1ee036e3135380846c860c3aaae61514c71aa0626c670375  Oracle Corporation/VirtualBox-4.3.40-110317-Win.exe
-b56fb2bef65099f6d6f24fa644f28c09b5c9b98f3b291781dd406f61352bb35ca4307c8d4221530902b15c55ea0b22d63fd572d6c7c8ecba372adb59ddfe6f55  Oracle Corporation/VirtualBox-6.1.0-135406-Win.exe
-44af22bde5164523819210ec0cea26ec562996307848f722b9482d4012e7b4b9f62710cfe73189ddd4c1801ed3221c51438a9df96574dc7e60deb02dbe75af00  VideoLAN/vlc-3.0.8-win32.exe
-40218f7075ca917ccc545e00963c0418d999c5c3394de44efc34aa1c7a111ab5816be5f64842bcde3f7e4b1a9512a50eb3802a87682277e1bbd3f304bc7033bb  VMware-viclient-all-6.0.0-5112508.exe
-f0265fd09e422aeeaa896f3f2044cdb60ae85be9a903f960984e21bc63e88795d560935d52643839a41a1ca4feffa973b2413b5bcea67a3f90f500b14a8b110a  VMware, Inc./VMware-workstation-full-15.5.1-15018445.exe
-21623a16b6661afd494b87833ba99b8bc58a2231560adb152f7bfdef3b62dfbe3799297f5c336e1c01b0ce5a8ec5de00a07cfac71b8c282da12e64b9253bc0a7  Intel(R) Software and Firmware Products/Intel(R)_USB_3.0_eXtensible_Host_Controller_Driver_5.0.4.43_v2/Setup.exe
-620c5e3e9aaf066d318aa4113322cbbd7bd1098d69c9000fcf887abbc233e0094353a8800d29bfd88967d8521ebac5932f39ad8471c0a0021ad94b5b942fd30c  Realtek Semiconductor Corp./Win7_Win8_Win81_Win10_R282/Setup.exe
-afed8a6de936a19bdeb387db0af803f74ec4a2a38c30669c65b61499ef33f4a1edee3aad85ec1147bac04bb479209d0513ea1625f88c2d34dc3b182f04b46a53  Macrovision Corporation/WDM_A406/setup.exe
-e9328579bce1733b4221430fb69d6821059d0b210c36d387cdd0b7f5a6e358fecc8cdfe8dd2e076dabab8a9f2df82f45f2e7e0ba2385be3fe6e513be5b871c5f  Waterfox Limited/Waterfox Classic 2019.12 Setup.exe
-a3d1192792d0e78dd7ea4aaeb372d7fa14c268402af2515c2c7fa8fa3ec9b45d1ef2e866448153f8d7dd66ecf49f94ea328a3f35ab83583a18b66dfe83577162  WebTorrent LLC/WebTorrentSetup-v0.21.0.exe
-4f4a62a0dd63227da0de81498bf9776b886ca981787b5a40e452e638bc2383af75b7e55d7fe49255e9b602510cd95f5b0875b6304f2629a504c8b08a30863f3a  WhatsApp, Inc/WhatsAppSetup.exe
-b915fce0c8fe85d4a05e0de7c20f77291dab94e42dd06f12d0759e32c766fba552be6611360d4066847c787ce498d70ff0dafe336484034bfe45742bef9ee200  Sysprogs OU/WinCDEmu-4.1.exe
-171aa1716efc475aad4a34545d8ca8fecf03ab7dc5f486339847c2789eec850f72a0ee58d5bfb8b6f2c3ccd40e847591574c7200382cb373bd7a3130411cf77c  IObit Information Technology/winmetro-setup.exe
-7080765da1fc4a80130f963889a7c122934fb1e390c610b957fb5f514d0e83481f0f0565d5e62816dcaaefd1f98fed6ac934b5f3c0922c03d143da923e473136  win.rar GmbH/wrar580.exe
-c0b8c22667bac40493cbd8f662019ff47632efe7adb5711ab51460bb8985121cce9740cc8f065159ad909e56af9d68d4c0b55a7799ffd67e44f084e18c29c2a9  Wire Swiss GmbH/WireSetup.exe
-2a779c620e7f3ac9ba19fe711d23520a27c01181680fe02e1c207ee88b97a652f97b1dafc04acf4d5547e1df458e7aa8a2047fade95034636cbfef2925ea53fb  Antibody Software Limited/wizmouse_1_7_0_3_setup.exe
-5772d86548150fd5f2c9693509349cbd631273510a5a76e952277283c949ae06d96c634721f6efcf0be2aabca26f78830312f4b238f63772e6e4f1c062276c23  Automattic, Inc./WordPressDesktop-Setup-4.6.0.exe
-a51ecf948d40d3aea529d2d13f454aa2480c245835f22a5253c870fb0e29be80410c51eb9b165e4650b0178f0582fa816d200c41d763c851ffd38dc8575d54c0  BitRock Inc/xampp-windows-x64-7.4.1-0-VC15-installer.exe
-4f38315bf0b4e645f27bd72009fd2e7c5f27145c2720ae783b04cedf374aec465364b45541537820d1bdf87028837497f80295a304557997630c6a53bb60fc66  YouWave Inc./YouWave-Android-Free-3-31.exe
 
 "
 esac
