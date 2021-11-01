@@ -1,7 +1,7 @@
 #!/bin/sh
 {
-# 356c0eccfe42034b1855129b431d70bb
-# f992bf6d5a8f2aa18713c4b04cbf1f11dac3e87addf4c5ab4e4dd883cea57d67c1f024c2dd84cf4149ce23dc471ab97ab9bd0b0d38fa6235853c376cb55636e3
+# 17b151c7150500c3529175a66accd8fb
+# e3677b8e8462d193e50a89b91808e5872fbb77f545aa6d3988f0068dae24152bf6320cb09dfa618c6af6c21fe5358eb29522dad6bfef5f360c7902af7e75407e
 set -u
 
 necho() {
@@ -3027,7 +3027,7 @@ name="${0##*"/"}"
 selfcheck
 setdevmode
 hash_mark="user.${name}.hash"
-pkgchk "awk" "b2sum" "base64" "bzip2" "cut" "find" "grep" "gzip" "head" "md5sum" "python" "realpath" "sed" "stat" "tac" "tail" "unzip" "wc" "xxd" "xz"
+pkgchk "awk" "b2sum" "base64" "bzip2" "cut" "find" "grep" "gzip" "head" "md5sum" "openssl" "python" "realpath" "sed" "stat" "tac" "tail" "unzip" "wc" "xxd" "xz"
 data_exceptions
 setcert
 set_colour
