@@ -27,7 +27,7 @@ sigchk [OPTION]... [FILE]...
 ***-q, --quiet*** quiet mode
 
 # Requirements
-`sh python awk bzip2 coreutils find grep gzip sed tar unzip xxd xz`
+`sh python awk bzip2 coreutils find grep gzip openssl sed tar unzip xxd xz`
 
 **Optional Packages**
 
